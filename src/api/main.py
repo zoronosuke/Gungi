@@ -113,10 +113,12 @@ async def root():
         "version": "1.0.0",
         "endpoints": [
             "/new_game",
-            "/apply_move",
-            "/predict",
+            "/apply_move/{game_id}",
+            "/predict/{game_id}",
             "/get_legal_moves/{game_id}",
             "/get_game/{game_id}",
+            "/resign/{game_id}",
+            "/delete_game/{game_id}",
         ]
     }
 
@@ -191,7 +193,11 @@ async def apply_move(game_id: str, move_request: MoveRequest):
         raise HTTPException(status_code=400, detail=f"無効なパラメータ: {str(e)}")
     
     # 手を適用
-    success = Rules.apply_move(game_state.board, move)
+    success, captured_piece = Rules.apply_move(
+        game_state.board, 
+        move, 
+        game_state.hand_pieces[game_state.current_player]
+    )
     
     if not success:
         return MoveResponse(
@@ -199,6 +205,14 @@ async def apply_move(game_id: str, move_request: MoveRequest):
             message="無効な手です",
             game_state=game_state.to_dict()
         )
+    
+    # 取った駒を持ち駒に追加
+    if captured_piece:
+        piece_type = captured_piece.piece_type
+        if piece_type in game_state.hand_pieces[game_state.current_player]:
+            game_state.hand_pieces[game_state.current_player][piece_type] += 1
+        else:
+            game_state.hand_pieces[game_state.current_player][piece_type] = 1
     
     # 履歴に追加
     game_state.move_history.append(move)
@@ -289,6 +303,31 @@ async def predict(game_id: str, request: PredictRequest):
         evaluation=0.0,  # 将来: ニューラルネットの評価値
         game_state=game_state.to_dict()
     )
+
+
+@app.post("/resign/{game_id}")
+async def resign(game_id: str):
+    """
+    投了する
+    現在のプレイヤーが投了し、相手の勝利となる
+    """
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="ゲームが見つかりません")
+    
+    game_state = games[game_id]
+    
+    if game_state.game_over:
+        raise HTTPException(status_code=400, detail="ゲームは既に終了しています")
+    
+    # 投了により相手の勝利
+    game_state.game_over = True
+    game_state.winner = game_state.current_player.opponent
+    
+    return {
+        "message": f"{game_state.current_player.name}が投了しました",
+        "winner": game_state.winner.name,
+        "game_state": game_state.to_dict()
+    }
 
 
 @app.delete("/delete_game/{game_id}")

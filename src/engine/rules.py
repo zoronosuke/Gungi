@@ -355,44 +355,56 @@ class Rules:
         for move in legal_moves:
             # 手を試す
             test_board = board.copy()
-            Rules.apply_move(test_board, move)
+            success, _ = Rules.apply_move(test_board, move)
             
             # この手で王手が回避できるか
-            if not Rules.is_check(test_board, player):
+            if success and not Rules.is_check(test_board, player):
                 return False
         
         return True
 
     @staticmethod
-    def apply_move(board: Board, move: Move) -> bool:
+    def apply_move(board: Board, move: Move, hand_pieces: dict = None) -> Tuple[bool, Optional[Piece]]:
         """
         盤面に手を適用する
-        返り値: 成功したらTrue
+        返り値: (成功したらTrue, 取った駒)
         """
+        captured_piece = None
+        
         if move.move_type == MoveType.NORMAL:
             # 通常の移動
-            return board.move_piece(move.from_pos, move.to_pos)
+            success = board.move_piece(move.from_pos, move.to_pos)
+            return success, None
         
         elif move.move_type == MoveType.CAPTURE:
             # 駒を取る
+            captured_piece = board.get_top_piece(move.to_pos)
             board.capture_piece(move.to_pos)
-            return board.move_piece(move.from_pos, move.to_pos)
+            success = board.move_piece(move.from_pos, move.to_pos)
+            return success, captured_piece
         
         elif move.move_type == MoveType.STACK:
             # 駒を重ねる
-            return board.move_piece(move.from_pos, move.to_pos)
+            success = board.move_piece(move.from_pos, move.to_pos)
+            return success, None
         
         elif move.move_type == MoveType.DROP:
             # 持ち駒を打つ
             piece = Piece(move.piece_type, move.player)
-            return board.add_piece(move.to_pos, piece)
+            success = board.add_piece(move.to_pos, piece)
+            # 持ち駒から減らす
+            if success and hand_pieces is not None:
+                if move.piece_type in hand_pieces and hand_pieces[move.piece_type] > 0:
+                    hand_pieces[move.piece_type] -= 1
+            return success, None
         
         elif move.move_type == MoveType.SETUP:
             # 初期配置
             piece = Piece(move.piece_type, move.player)
-            return board.add_piece(move.to_pos, piece)
+            success = board.add_piece(move.to_pos, piece)
+            return success, None
         
-        return False
+        return False, None
 
     @staticmethod
     def is_game_over(board: Board) -> Tuple[bool, Optional[Player]]:
