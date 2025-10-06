@@ -2,7 +2,7 @@
  * 軍儀 フロントエンド JavaScript
  */
 
-const API_BASE_URL = 'http://localhost:8001';
+const API_BASE_URL = 'http://localhost:8003';
 
 // ゲーム状態
 let gameState = {
@@ -203,6 +203,8 @@ function updateGameInfo() {
  * マスのクリック処理
  */
 async function handleCellClick(row, col) {
+    console.log(`クリック: (${row}, ${col})`);
+    
     if (!gameState.gameId) {
         showMessage('先にゲームを開始してください', 'warning');
         return;
@@ -214,11 +216,35 @@ async function handleCellClick(row, col) {
         // 駒が選択されている場合 → 合法手かチェックしてから移動
         const clickedCell = document.querySelector(`[data-row="${row}"][data-col="${col}"]`);
         if (clickedCell && clickedCell.classList.contains('legal-move')) {
-            attemptMove(gameState.selectedPiece.row, gameState.selectedPiece.col, row, col);
+            // 目的地の駒と可能な手の種類をチェック
+            const possibleMoves = getPossibleMovesForPosition(gameState.selectedPiece.row, gameState.selectedPiece.col, row, col);
+            
+            console.log(`可能な手の数: ${possibleMoves.length}`, possibleMoves);
+            
+            if (possibleMoves.length === 1) {
+                // 1つだけの選択肢の場合、そのまま実行
+                const fromRow = gameState.selectedPiece.row;
+                const fromCol = gameState.selectedPiece.col;
+                const moveType = possibleMoves[0].type;
+                clearSelection();
+                await attemptMove(fromRow, fromCol, row, col, moveType);
+            } else if (possibleMoves.length > 1) {
+                // 複数の選択肢がある場合、ユーザーに選択させる
+                showMoveTypeSelection(gameState.selectedPiece.row, gameState.selectedPiece.col, row, col, possibleMoves);
+                return; // clearSelectionは選択後に呼ばれる
+            } else {
+                showMessage('そこには移動できません', 'warning');
+                clearSelection();
+            }
         } else {
-            showMessage('そこには移動できません', 'warning');
+            // 選択解除または別の駒を選択
+            if (topPiece && topPiece.owner === gameState.currentPlayer) {
+                // 別の自分の駒を選択
+                await selectPiece(row, col);
+            } else {
+                clearSelection();
+            }
         }
-        clearSelection();
     } else if (topPiece && topPiece.owner === gameState.currentPlayer) {
         // 自分の駒を選択
         await selectPiece(row, col);
@@ -282,6 +308,9 @@ async function fetchAndDisplayLegalMoves(fromRow, fromCol) {
                        move.from[1] === fromCol;
             });
             
+            // 合法手を保存（後で使用）
+            gameState.legalMoves = movesFromThisPiece;
+            
             console.log(`移動可能な手: ${movesFromThisPiece.length}個`);
             
             // 移動可能なマスをハイライト
@@ -291,7 +320,7 @@ async function fetchAndDisplayLegalMoves(fromRow, fromCol) {
                     const targetCell = document.querySelector(`[data-row="${toRow}"][data-col="${toCol}"]`);
                     if (targetCell) {
                         targetCell.classList.add('legal-move');
-                        console.log(`ハイライト追加: (${toRow}, ${toCol})`);
+                        console.log(`ハイライト追加: (${toRow}, ${toCol}), タイプ: ${move.type}`);
                     }
                 }
             });
@@ -302,17 +331,78 @@ async function fetchAndDisplayLegalMoves(fromRow, fromCol) {
 }
 
 /**
+ * 指定位置への可能な手の種類を取得
+ */
+function getPossibleMovesForPosition(fromRow, fromCol, toRow, toCol) {
+    const moves = gameState.legalMoves.filter(move => {
+        return move.from && 
+               move.from[0] === fromRow && 
+               move.from[1] === fromCol &&
+               move.to &&
+               move.to[0] === toRow && 
+               move.to[1] === toCol;
+    });
+    return moves;
+}
+
+/**
+ * 手の種類選択UIを表示
+ */
+function showMoveTypeSelection(fromRow, fromCol, toRow, toCol, possibleMoves) {
+    // モーダルを作成
+    const modal = document.createElement('div');
+    modal.className = 'move-type-modal';
+    modal.innerHTML = `
+        <div class="move-type-content">
+            <h3>手の種類を選択してください</h3>
+            <div class="move-type-buttons">
+                ${possibleMoves.map(move => {
+                    let label = '';
+                    if (move.type === 'CAPTURE') label = '駒を取る';
+                    else if (move.type === 'STACK') label = '駒を重ねる（ツケ）';
+                    else if (move.type === 'NORMAL') label = '通常移動';
+                    
+                    return `<button class="move-type-btn" data-type="${move.type}">${label}</button>`;
+                }).join('')}
+                <button class="move-type-btn cancel-btn">キャンセル</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // ボタンのイベントリスナー
+    modal.querySelectorAll('.move-type-btn:not(.cancel-btn)').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const moveType = btn.dataset.type;
+            document.body.removeChild(modal);
+            clearSelection();
+            await attemptMove(fromRow, fromCol, toRow, toCol, moveType);
+        });
+    });
+    
+    modal.querySelector('.cancel-btn').addEventListener('click', () => {
+        document.body.removeChild(modal);
+        clearSelection();
+    });
+}
+
+/**
  * 手を試みる
  */
-async function attemptMove(fromRow, fromCol, toRow, toCol) {
+async function attemptMove(fromRow, fromCol, toRow, toCol, moveType = 'NORMAL') {
     try {
+        console.log(`手を試みる: (${fromRow}, ${fromCol}) -> (${toRow}, ${toCol}), タイプ: ${moveType}`);
+        
         const moveData = {
             from_row: fromRow,
             from_col: fromCol,
             to_row: toRow,
             to_col: toCol,
-            move_type: 'NORMAL'
+            move_type: moveType
         };
+        
+        console.log('送信データ:', moveData);
         
         const response = await fetch(`${API_BASE_URL}/apply_move/${gameState.gameId}`, {
             method: 'POST',
@@ -322,13 +412,16 @@ async function attemptMove(fromRow, fromCol, toRow, toCol) {
             body: JSON.stringify(moveData)
         });
         
+        console.log('レスポンスステータス:', response.status);
+        
         const data = await response.json();
+        console.log('レスポンスデータ:', data);
         
         if (data.success) {
             updateGameState(data.game_state);
             showMessage('手を適用しました', 'success');
         } else {
-            showMessage('無効な手です: ' + data.message, 'warning');
+            showMessage('無効な手です: ' + (data.message || ''), 'warning');
         }
         
     } catch (error) {

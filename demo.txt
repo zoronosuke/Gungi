@@ -1,0 +1,1473 @@
+import numpy as np
+from enum import Enum, auto
+from typing import List, Tuple, Dict, Set, Optional, Union
+from IPython.display import display, HTML, clear_output
+import ipywidgets as widgets
+
+# 定数と列挙型
+class Player(Enum):
+    BLACK = 0  # 先手（黒）
+    WHITE = 1  # 後手（白）
+
+    @property
+    def opponent(self):
+        return Player.WHITE if self == Player.BLACK else Player.BLACK
+
+class PieceType(Enum):
+    SUI = auto()    # 帥 - 王将に相当
+    DAI = auto()    # 大 - 飛車+斜め移動
+    CHUU = auto()   # 中 - 角行+直線移動
+    SHO = auto()    # 小 - 金将に相当
+    SAMURAI = auto() # 侍 - 前方、斜め前方、後方
+    HYO = auto()    # 兵 - 前/後方の歩兵
+    UMA = auto()    # 馬 - 2マス直線移動
+    SHINOBI = auto() # 忍 - 1〜2マス斜め移動
+    YARI = auto()   # 槍 - 侍と似ているが前に2マス移動可
+    TORIDE = auto()  # 砦 - 防御駒
+    YUMI = auto()   # 弓 - 駒を飛び越え可能
+    TSUTU = auto()  # 筒 - マスケット（飛び越え駒）
+    HOU = auto()    # 砲 - 大砲（飛び越え駒）
+    BOU = auto()    # 謀 - スパイ（敵駒を寝返らせる）
+
+# 各プレイヤーの駒の数
+PIECE_COUNTS = {
+    PieceType.SUI: 1,
+    PieceType.DAI: 1,
+    PieceType.CHUU: 1,
+    PieceType.SHO: 2,
+    PieceType.SAMURAI: 2,
+    PieceType.HYO: 4,
+    PieceType.UMA: 2,
+    PieceType.SHINOBI: 2,
+    PieceType.YARI: 3,
+    PieceType.TORIDE: 2,
+    PieceType.YUMI: 2,
+    PieceType.TSUTU: 1,
+    PieceType.HOU: 1,
+    PieceType.BOU: 1
+}
+
+# 盤面の設定
+BOARD_SIZE = 9
+MAX_STACK_HEIGHT = 3
+
+class Piece:
+    """軍議の駒を表すクラス"""
+    def __init__(self, piece_type: PieceType, owner: Player):
+        self.piece_type = piece_type
+        self.owner = owner
+
+    def __str__(self):
+        """駒の文字列表現"""
+        piece_symbols = {
+            PieceType.SUI: "帥",
+            PieceType.DAI: "大",
+            PieceType.CHUU: "中",
+            PieceType.SHO: "小",
+            PieceType.SAMURAI: "侍",
+            PieceType.HYO: "兵",
+            PieceType.UMA: "馬",
+            PieceType.SHINOBI: "忍",
+            PieceType.YARI: "槍",
+            PieceType.TORIDE: "砦",
+            PieceType.YUMI: "弓",
+            PieceType.TSUTU: "筒",
+            PieceType.HOU: "砲",
+            PieceType.BOU: "謀"
+        }
+        return f"{'b' if self.owner == Player.BLACK else 'w'}{piece_symbols[self.piece_type]}"
+
+    def get_possible_moves(self, position: Tuple[int, int], board: 'Board', stack_level: int) -> List[Tuple[int, int]]:
+        """指定された位置からこの駒の全ての可能な移動先を返す"""
+        row, col = position
+        possible_moves = []
+
+        # 各駒タイプごとの移動パターンを定義
+        if self.piece_type == PieceType.SUI:  # 帥の移動（王将のような動き）
+            directions = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
+            for dr, dc in directions:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.DAI:  # 大将の移動（飛車 + 1マス斜め）
+            # 直線移動（無制限）
+            for dr, dc in [(1, 0), (0, 1), (-1, 0), (0, -1)]:
+                r, c = row, col
+                while True:
+                    r, c = r + dr, c + dc
+                    if not (0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE):
+                        break
+                    if board.is_occupied((r, c)):
+                        possible_moves.append((r, c))
+                        break
+                    possible_moves.append((r, c))
+
+            # 斜め移動（1マス）
+            for dr, dc in [(1, 1), (-1, 1), (-1, -1), (1, -1)]:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.CHUU:  # 中将の移動（角行 + 1マス直線）
+            # 斜め移動（無制限）
+            for dr, dc in [(1, 1), (-1, 1), (-1, -1), (1, -1)]:
+                r, c = row, col
+                while True:
+                    r, c = r + dr, c + dc
+                    if not (0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE):
+                        break
+                    if board.is_occupied((r, c)):
+                        possible_moves.append((r, c))
+                        break
+                    possible_moves.append((r, c))
+
+            # 直線移動（1マス）
+            for dr, dc in [(1, 0), (0, 1), (-1, 0), (0, -1)]:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.SHO:  # 小将の移動（金将と同様）
+            directions = [(1, 0), (1, 1), (0, 1), (0, -1), (-1, 0), (1, -1)]
+            for dr, dc in directions:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.SAMURAI:  # 侍の移動（前方、斜め前方、後方）
+            directions = [(1, 0), (1, 1), (1, -1), (-1, 0)]
+            for dr, dc in directions:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.HYO:  # 兵の移動（前後の歩兵）
+            directions = [(1, 0), (-1, 0)]
+            for dr, dc in directions:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.UMA:  # 馬の移動（2マス直線移動）
+            directions = [(2, 0), (0, 2), (-2, 0), (0, -2)]
+            for dr, dc in directions:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    # 経路が空いているか確認（飛び越えなし）
+                    mid_r, mid_c = row + dr//2, col + dc//2
+                    if not board.is_occupied((mid_r, mid_c)):
+                        possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.SHINOBI:  # 忍の移動（1〜2マス斜め移動）
+            # 1マス斜め移動
+            for dr, dc in [(1, 1), (-1, 1), (-1, -1), (1, -1)]:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+            # 2マス斜め移動
+            for dr, dc in [(2, 2), (-2, 2), (-2, -2), (2, -2)]:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    # 経路が空いているか確認（飛び越えなし）
+                    mid_r, mid_c = row + dr//2, col + dc//2
+                    if not board.is_occupied((mid_r, mid_c)):
+                        possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.YARI:  # 槍の移動（前方2マス可能な侍）
+            # 侍と同様だが、前方の移動が拡張
+            directions = [(1, 1), (1, -1), (-1, 0)]
+            for dr, dc in directions:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+            # 前方1-2マス
+            for steps in [1, 2]:
+                r, c = row + steps, col
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    if steps == 1 or not board.is_occupied((row + 1, col)):
+                        possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.TORIDE:  # 砦の移動（防御駒）
+            # 基本的な防御的移動 - この実装では簡略化
+            directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+            for dr, dc in directions:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+        elif self.piece_type == PieceType.YUMI:  # 弓の移動（飛び越え能力）
+            # 直線上で1つの駒を飛び越えられる
+            directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+            for dr, dc in directions:
+                # 1マス移動
+                r1, c1 = row + dr, col + dc
+                if 0 <= r1 < BOARD_SIZE and 0 <= c1 < BOARD_SIZE:
+                    possible_moves.append((r1, c1))
+
+                    # 1マス先に駒があれば、2マス先に飛び越えられる
+                    if board.is_occupied((r1, c1)):
+                        r2, c2 = r1 + dr, c1 + dc
+                        if 0 <= r2 < BOARD_SIZE and 0 <= c2 < BOARD_SIZE:
+                            possible_moves.append((r2, c2))
+
+        elif self.piece_type == PieceType.TSUTU:  # 筒の移動（飛び越え能力）
+            # 直交方向の任意の駒を1つ飛び越えられる
+            directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+            for dr, dc in directions:
+                # 1マス移動
+                r1, c1 = row + dr, col + dc
+                if 0 <= r1 < BOARD_SIZE and 0 <= c1 < BOARD_SIZE:
+                    possible_moves.append((r1, c1))
+
+                    # 1マス先に駒があれば、2マス先に飛び越えられる
+                    if board.is_occupied((r1, c1)):
+                        r2, c2 = r1 + dr, c1 + dc
+                        if 0 <= r2 < BOARD_SIZE and 0 <= c2 < BOARD_SIZE:
+                            possible_moves.append((r2, c2))
+
+        elif self.piece_type == PieceType.HOU:  # 砲の移動（飛び越え能力）
+            # TSTUTUに似ているがさらに遠くへジャンプ可能
+            directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+            for dr, dc in directions:
+                # 1マス移動
+                r1, c1 = row + dr, col + dc
+                if 0 <= r1 < BOARD_SIZE and 0 <= c1 < BOARD_SIZE:
+                    possible_moves.append((r1, c1))
+
+                    # 1マス先に駒があれば、2マス先に飛び越えられる
+                    if board.is_occupied((r1, c1)):
+                        r2, c2 = r1 + dr, c1 + dc
+                        if 0 <= r2 < BOARD_SIZE and 0 <= c2 < BOARD_SIZE:
+                            possible_moves.append((r2, c2))
+
+        elif self.piece_type == PieceType.BOU:  # 謀の移動（スパイ）
+            # 銀将のような動きだが真っ直ぐ前には進めない
+            directions = [(1, 1), (1, -1), (-1, 0), (-1, 1), (-1, -1)]
+            for dr, dc in directions:
+                r, c = row + dr, col + dc
+                if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE:
+                    possible_moves.append((r, c))
+
+        # スタックレベルルールに基づいて移動をフィルタリング
+        valid_moves = []
+        for move in possible_moves:
+            # スタックレベルルールに基づいて移動が有効かチェック
+            top_level_at_target = board.get_top_stack_level(move)
+
+            # 空のマスには常に移動可能
+            if top_level_at_target == 0:
+                valid_moves.append(move)
+            # 同じか低いレベルには捕獲/スタック可能
+            elif top_level_at_target <= stack_level:
+                top_owner = board.get_top_piece_owner(move)
+                # 相手の駒か同じレベルなら捕獲/スタック可能
+                if top_owner != self.owner or top_level_at_target < stack_level:
+                    valid_moves.append(move)
+
+        return valid_moves
+
+class Stack:
+    """盤面の一つの位置にあるスタック（重ね駒）を表すクラス"""
+    def __init__(self):
+        self.pieces = []  # 下から上への駒のリスト
+
+    def __len__(self):
+        return len(self.pieces)
+
+    def is_empty(self):
+        return len(self.pieces) == 0
+
+    def add_piece(self, piece: Piece) -> bool:
+        """スタックの一番上に駒を追加。成功すればTrue"""
+        if len(self.pieces) >= MAX_STACK_HEIGHT:
+            return False
+        self.pieces.append(piece)
+        return True
+
+    def remove_top_piece(self) -> Optional[Piece]:
+        """スタックから一番上の駒を取り除き、返す"""
+        if self.is_empty():
+            return None
+        return self.pieces.pop()
+
+    def get_top_piece(self) -> Optional[Piece]:
+        """取り除かずに一番上の駒を返す"""
+        if self.is_empty():
+            return None
+        return self.pieces[-1]
+
+    def get_piece_at_level(self, level: int) -> Optional[Piece]:
+        """指定されたスタックレベルの駒を返す（0からインデックス）"""
+        if level < 0 or level >= len(self.pieces):
+            return None
+        return self.pieces[level]
+
+    def convert_piece_at_level(self, level: int, new_owner: Player) -> bool:
+        """指定されたレベルの駒の所有者を変更（寝返り能力用）"""
+        if level < 0 or level >= len(self.pieces):
+            return False
+        self.pieces[level].owner = new_owner
+        return True
+
+    def __str__(self):
+        if self.is_empty():
+            return "   "
+        return "/".join(str(piece) for piece in self.pieces)
+
+class Board:
+    """軍議のゲームボードを表すクラス"""
+    def __init__(self):
+        # 空の盤面を初期化
+        self.stacks = [[Stack() for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
+
+    def get_stack(self, position: Tuple[int, int]) -> Stack:
+        """指定された位置のスタックを返す"""
+        row, col = position
+        return self.stacks[row][col]
+
+    def is_occupied(self, position: Tuple[int, int]) -> bool:
+        """指定された位置に少なくとも1つの駒があるか確認"""
+        return not self.get_stack(position).is_empty()
+
+    def get_top_stack_level(self, position: Tuple[int, int]) -> int:
+        """指定された位置のスタックの現在の高さを返す（空なら0）"""
+        return len(self.get_stack(position))
+
+    def get_top_piece(self, position: Tuple[int, int]) -> Optional[Piece]:
+        """指定された位置の一番上の駒を返す"""
+        return self.get_stack(position).get_top_piece()
+
+    def get_top_piece_owner(self, position: Tuple[int, int]) -> Optional[Player]:
+        """指定された位置の一番上の駒の所有者を返す"""
+        piece = self.get_top_piece(position)
+        return piece.owner if piece else None
+
+    def add_piece(self, position: Tuple[int, int], piece: Piece) -> bool:
+        """指定された位置のスタックの一番上に駒を追加"""
+        return self.get_stack(position).add_piece(piece)
+
+    def remove_top_piece(self, position: Tuple[int, int]) -> Optional[Piece]:
+        """指定された位置から一番上の駒を取り除き、返す"""
+        return self.get_stack(position).remove_top_piece()
+
+    def move_piece(self, from_pos: Tuple[int, int], to_pos: Tuple[int, int],
+                  check_only: bool = False) -> bool:
+        """ある位置から別の位置に駒を移動"""
+        if not self.is_occupied(from_pos):
+            return False
+
+        from_stack = self.get_stack(from_pos)
+        to_stack = self.get_stack(to_pos)
+
+        # 目標スタックがすでに最大高さの場合は移動不可
+        if len(to_stack) >= MAX_STACK_HEIGHT:
+            return False
+
+        # チェックのみの場合は実際に移動しない
+        if check_only:
+            return True
+
+        # 元のスタックから駒を取り除き、目標スタックに追加
+        piece = from_stack.remove_top_piece()
+        to_stack.add_piece(piece)
+
+        return True
+
+    def __str__(self):
+        """盤面の文字列表現を返す"""
+        # 各セルの幅を定義（半角5文字）
+        cell_width = 5
+
+        # 区切り線の長さを計算
+        separator_length = BOARD_SIZE * (cell_width + 1) + 1
+
+        result = []
+
+        # 列インデックスヘッダー
+        header = "   "
+        for i in range(BOARD_SIZE):
+            # 各セルの中央に列番号を配置
+            header += f"{i:^{cell_width}}|"
+        result.append(header)
+
+        # 区切り線
+        result.append("  " + "-" * separator_length)
+
+        for row in range(BOARD_SIZE):
+            row_str = f"{row} |"
+            for col in range(BOARD_SIZE):
+                stack = self.stacks[row][col]
+                if stack.is_empty():
+                    # 空のセル
+                    row_str += " " * cell_width + "|"
+                else:
+                    # 駒があるセル - 中央に配置
+                    piece_str = str(stack.get_top_piece())
+                    row_str += f"{piece_str:^{cell_width - 1}}|"
+            result.append(row_str)
+            result.append("  " + "-" * separator_length)
+
+        return "\n".join(result)
+
+class HumanPlayer:
+    """ゲーム内の人間プレイヤーを表すクラス"""
+    def __init__(self, color: Player):
+        self.color = color
+        self.unplaced_pieces = {}
+
+        # 未配置の駒セットを初期化
+        for piece_type, count in PIECE_COUNTS.items():
+            self.unplaced_pieces[piece_type] = count
+
+    def get_unplaced_count(self, piece_type: PieceType) -> int:
+        """指定されたタイプの未配置駒の数を返す"""
+        return self.unplaced_pieces.get(piece_type, 0)
+
+    def decrement_unplaced(self, piece_type: PieceType) -> bool:
+        """指定されたタイプの未配置駒の数を減らす"""
+        if self.get_unplaced_count(piece_type) <= 0:
+            return False
+        self.unplaced_pieces[piece_type] -= 1
+        return True
+
+    def increment_unplaced(self, piece_type: PieceType) -> None:
+        """指定されたタイプの未配置駒の数を増やす"""
+        self.unplaced_pieces[piece_type] = self.get_unplaced_count(piece_type) + 1
+
+    def has_spy_conversion_available(self, enemy_piece_type: PieceType) -> bool:
+        """スパイ変換に使用可能な未配置駒があるか確認"""
+        return self.get_unplaced_count(enemy_piece_type) > 0
+
+class GamePhase(Enum):
+    SETUP = auto()  # 初期配置フェーズ
+    PLAY = auto()   # メインゲームプレイフェーズ
+
+class Game:
+    """軍議のメインゲームロジッククラス"""
+    def __init__(self):
+        self.board = Board()
+        self.players = {
+            Player.BLACK: HumanPlayer(Player.BLACK),
+            Player.WHITE: HumanPlayer(Player.WHITE)
+        }
+        self.current_player = Player.BLACK  # 黒（先手）が最初
+        self.phase = GamePhase.SETUP
+        self.move_count = 0
+        self.sui_positions = {Player.BLACK: None, Player.WHITE: None}
+        self.setup_complete = {Player.BLACK: False, Player.WHITE: False}
+        # 帥が取られたかどうかのフラグ
+        self._captured_sui = False
+        # 勝者
+        self._winner = None
+
+    def switch_turn(self):
+        """現在のプレイヤーを切り替える"""
+        self.current_player = self.current_player.opponent
+        self.move_count += 1
+
+    def is_setup_complete(self) -> bool:
+        """両プレイヤーが初期配置を完了したか確認"""
+        return self.setup_complete[Player.BLACK] and self.setup_complete[Player.WHITE]
+
+    # Game クラスの place_piece メソッドを修正
+    def place_piece(self, position: Tuple[int, int], piece_type: PieceType) -> bool:
+        """セットアップフェーズ中に駒を配置"""
+        if self.phase != GamePhase.SETUP:
+            return False
+
+        row, col = position
+        player = self.players[self.current_player]
+
+        # プレイヤーがこのタイプの未配置駒を持っているか確認
+        if player.get_unplaced_count(piece_type) <= 0:
+            return False
+
+        # 配置位置が有効か確認 - 修正: 黒と白の条件を逆にしていた可能性
+        if self.current_player == Player.BLACK:
+            # 黒の領域は下から3行 (6-8)
+            if row < 6:
+                return False
+        else:  # Player.WHITE
+            # 白の領域は上から3行 (0-2)
+            if row > 2:
+                return False
+
+        # 位置が空いているか確認
+        if self.board.is_occupied(position):
+            return False
+
+        # 最初の手は必ず帥（王）を配置
+        if (self.move_count == 0 and self.current_player == Player.BLACK) or \
+           (self.move_count == 1 and self.current_player == Player.WHITE):
+            if piece_type != PieceType.SUI:
+                return False
+
+        # 駒を配置
+        piece = Piece(piece_type, self.current_player)
+        success = self.board.add_piece(position, piece)
+
+        if success:
+            player.decrement_unplaced(piece_type)
+
+            # これが帥（王）なら、その位置を記録
+            if piece_type == PieceType.SUI:
+                self.sui_positions[self.current_player] = position
+
+            self.switch_turn()
+            return True
+
+        return False
+
+    def declare_setup_complete(self) -> bool:
+        """現在のプレイヤーの配置完了を宣言"""
+        if self.phase != GamePhase.SETUP:
+            return False
+
+        # 現在のプレイヤーの配置を完了としてマーク
+        self.setup_complete[self.current_player] = True
+
+        # 両プレイヤーが配置を完了したらプレイフェーズに移行
+        if self.is_setup_complete():
+            self.phase = GamePhase.PLAY
+
+        self.switch_turn()
+        return True
+
+    # 帥（王）が取られたらその時点で勝敗が決まるようにする
+    def move_piece(self, from_pos: Tuple[int, int], to_pos: Tuple[int, int]) -> bool:
+        """プレイフェーズ中に駒を移動"""
+        if self.phase != GamePhase.PLAY:
+            return False
+
+        # 元の位置に駒があるか確認
+        if not self.board.is_occupied(from_pos):
+            return False
+
+        # 元の位置の一番上の駒が現在のプレイヤーのものか確認
+        top_piece = self.board.get_top_piece(from_pos)
+        if top_piece.owner != self.current_player:
+            return False
+
+        # 移動する駒のスタックレベルを取得
+        stack_level = self.board.get_top_stack_level(from_pos)
+
+        # 駒の移動ルールに従って移動が有効か確認
+        possible_moves = top_piece.get_possible_moves(from_pos, self.board, stack_level)
+        if to_pos not in possible_moves:
+            return False
+
+        # スタック高さルールを確認
+        from_stack_height = self.board.get_top_stack_level(from_pos)
+        to_stack_height = self.board.get_top_stack_level(to_pos)
+
+        # MAX_STACK_HEIGHT以上は積めない
+        if to_stack_height >= MAX_STACK_HEIGHT:
+            return False
+
+        # 移動先に敵の帥があるか確認（勝利条件）
+        target_is_enemy_sui = False
+        if self.board.is_occupied(to_pos):
+            target_piece = self.board.get_top_piece(to_pos)
+            if target_piece.owner != self.current_player and target_piece.piece_type == PieceType.SUI:
+                target_is_enemy_sui = True
+                # 敵の帥の位置情報をクリア
+                self.sui_positions[target_piece.owner] = None
+
+        # 謀（スパイ）の特殊ケース - 寝返り（寝返りの特殊能力）
+        spy_conversion = False
+        if top_piece.piece_type == PieceType.BOU:
+            # 敵の駒に移動する場合、変換が可能か確認
+            if self.board.is_occupied(to_pos):
+                target_piece = self.board.get_top_piece(to_pos)
+                if target_piece.owner != self.current_player:
+                    # プレイヤーが同じタイプの未配置駒を持っているか確認
+                    player = self.players[self.current_player]
+                    if player.has_spy_conversion_available(target_piece.piece_type) and target_piece.piece_type != PieceType.SUI:
+                        # 帥は寝返らせない
+                        spy_conversion = True
+
+        # 移動を実行
+        success = self.board.move_piece(from_pos, to_pos)
+
+        if success:
+            # スパイ変換が適用可能なら処理
+            if spy_conversion:
+                # スパイの下の駒を変換
+                target_stack = self.board.get_stack(to_pos)
+                if len(target_stack) >= 2:
+                    target_piece_level = len(target_stack) - 2  # スパイの下の駒
+                    target_piece = target_stack.get_piece_at_level(target_piece_level)
+                    target_piece_type = target_piece.piece_type
+
+                    # 駒を変換
+                    target_stack.convert_piece_at_level(target_piece_level, self.current_player)
+
+                    # プレイヤーの未配置駒を更新
+                    player = self.players[self.current_player]
+                    player.decrement_unplaced(target_piece_type)
+
+            # 帥を移動した場合は位置を更新
+            if top_piece.piece_type == PieceType.SUI:
+                self.sui_positions[self.current_player] = to_pos
+
+            # 帥を取った場合は特別な処理（すぐに勝敗が決まる）
+            if target_is_enemy_sui:
+                self._captured_sui = True
+                self._winner = self.current_player
+            else:
+                self.switch_turn()
+            return True
+
+        return False
+
+
+    def place_new_piece(self, position: Tuple[int, int], piece_type: PieceType) -> bool:
+        """プレイフェーズ中に新しい駒を配置"""
+        if self.phase != GamePhase.PLAY:
+            return False
+
+        player = self.players[self.current_player]
+
+        # プレイヤーがこのタイプの未配置駒を持っているか確認
+        if player.get_unplaced_count(piece_type) <= 0:
+            return False
+
+        # 位置が空いているか確認
+        if self.board.is_occupied(position):
+            return False
+
+        # 位置が有効か確認（プレイヤーの前線より先には配置不可）
+        frontline = self.get_frontline(self.current_player)
+        if self.current_player == Player.BLACK:
+            # 黒の駒は前線以降にのみ配置可能
+            if position[0] < frontline:
+                return False
+        else:  # Player.WHITE
+            # 白の駒は前線以降にのみ配置可能
+            if position[0] > frontline:
+                return False
+
+        # 駒を配置
+        piece = Piece(piece_type, self.current_player)
+        success = self.board.add_piece(position, piece)
+
+        if success:
+            player.decrement_unplaced(piece_type)
+
+            # これが帥（王）なら、その位置を記録
+            if piece_type == PieceType.SUI:
+                self.sui_positions[self.current_player] = position
+
+            self.switch_turn()
+            return True
+
+        return False
+
+    def get_frontline(self, player: Player) -> int:
+        """指定されたプレイヤーの前線行インデックスを取得"""
+        if player == Player.BLACK:
+            # 最も進んだ黒の駒を探す
+            for row in range(BOARD_SIZE):
+                for col in range(BOARD_SIZE):
+                    if self.board.is_occupied((row, col)) and self.board.get_top_piece_owner((row, col)) == Player.BLACK:
+                        return row
+            return BOARD_SIZE - 1  # 駒がない場合は最後の行をデフォルトとする
+        else:  # Player.WHITE
+            # 最も進んだ白の駒を探す
+            for row in range(BOARD_SIZE - 1, -1, -1):
+                for col in range(BOARD_SIZE):
+                    if self.board.is_occupied((row, col)) and self.board.get_top_piece_owner((row, col)) == Player.WHITE:
+                        return row
+            return 0  # 駒がない場合は最初の行をデフォルトとする
+
+    def is_checkmate(self) -> bool:
+        """現在のプレイヤーが詰みの状態か確認"""
+        # 現在のプレイヤーの帥の位置を取得
+        sui_position = self.sui_positions[self.current_player]
+        if sui_position is None:
+            return False
+
+        # 帥が攻撃を受けているか確認
+        if not self.is_position_under_attack(sui_position, self.current_player):
+            return False
+
+        # 帥が逃げられるか確認
+        sui_piece = self.board.get_top_piece(sui_position)
+        sui_level = self.board.get_top_stack_level(sui_position)
+        possible_moves = sui_piece.get_possible_moves(sui_position, self.board, sui_level)
+
+        for move in possible_moves:
+            # 一時的に移動
+            old_to_piece = self.board.get_top_piece(move)
+            success = self.board.move_piece(sui_position, move, check_only=True)
+            if success:
+                # 移動後も帥が攻撃を受けているか確認
+                under_attack = self.is_position_under_attack(move, self.current_player)
+
+                # 移動を元に戻す
+                self.board.remove_top_piece(move)
+                if old_to_piece:
+                    self.board.add_piece(move, old_to_piece)
+                self.board.add_piece(sui_position, sui_piece)
+
+                if not under_attack:
+                    return False  # 王手を逃れる手が見つかった
+
+        # 王手を逃れる手がない
+        return True
+
+    def is_position_under_attack(self, position: Tuple[int, int], defender: Player) -> bool:
+        """指定された位置が相手から攻撃を受けているか確認"""
+        attacker = defender.opponent
+
+        # 相手のすべての駒をチェック
+        for row in range(BOARD_SIZE):
+            for col in range(BOARD_SIZE):
+                if self.board.is_occupied((row, col)):
+                    piece = self.board.get_top_piece((row, col))
+                    if piece and piece.owner == attacker:
+                        # この駒が目標位置に移動できるか確認
+                        stack_level = self.board.get_top_stack_level((row, col))
+                        possible_moves = piece.get_possible_moves((row, col), self.board, stack_level)
+                        if position in possible_moves:
+                            return True
+
+        return False
+
+    def is_game_over(self) -> bool:
+      """ゲームが終了したかどうかを確認"""
+      return self.get_winner() is not None
+
+    def get_winner(self) -> Optional[Player]:
+        """ゲームの勝者を返す（ゲームが終了していない場合はNone）"""
+        # 帥が取られた場合
+        if hasattr(self, '_winner') and self._winner is not None:
+            return self._winner
+
+        # 投了による勝利
+        if hasattr(self, '_resigned_player'):
+            return self._resigned_player.opponent
+
+        # 詰みによる勝利
+        if self.is_checkmate():
+            return self.current_player.opponent
+
+        return None
+
+    def __str__(self):
+        """ゲーム状態の文字列表現を返す"""
+        result = []
+        result.append(f"現在の手番: {'黒（先手）' if self.current_player == Player.BLACK else '白（後手）'}")
+        result.append(f"フェーズ: {'セットアップ' if self.phase == GamePhase.SETUP else 'プレイ'}")
+
+        if self.phase == GamePhase.SETUP:
+            result.append(f"セットアップ完了: 黒={self.setup_complete[Player.BLACK]}, 白={self.setup_complete[Player.WHITE]}")
+
+        result.append("\n盤面:")
+        result.append(str(self.board))
+
+        result.append("\n未配置の駒:")
+        for player, name in [(Player.BLACK, "黒（先手）"), (Player.WHITE, "白（後手）")]:
+            result.append(f"{name}:")
+            for piece_type, count in self.players[player].unplaced_pieces.items():
+                if count > 0:
+                    piece_names = {
+                        PieceType.SUI: "帥",
+                        PieceType.DAI: "大",
+                        PieceType.CHUU: "中",
+                        PieceType.SHO: "小",
+                        PieceType.SAMURAI: "侍",
+                        PieceType.HYO: "兵",
+                        PieceType.UMA: "馬",
+                        PieceType.SHINOBI: "忍",
+                        PieceType.YARI: "槍",
+                        PieceType.TORIDE: "砦",
+                        PieceType.YUMI: "弓",
+                        PieceType.TSUTU: "筒",
+                        PieceType.HOU: "砲",
+                        PieceType.BOU: "謀"
+                    }
+                    result.append(f"  {piece_names[piece_type]}: {count}個")
+
+        return "\n".join(result)
+
+class GungiUI:
+    """Google Colabで軍議をプレイするためのユーザーインターフェース"""
+    def __init__(self):
+        self.game = Game()
+        self.selected_position = None
+        self.message = "軍議へようこそ！セットアップフェーズ: まず帥（王）を配置してください。"
+
+        # ウィジェットのセットアップ
+        self.setup_widgets()
+
+    def setup_widgets(self):
+        """インタラクティブなウィジェットをセットアップ"""
+        self.output = widgets.Output()
+
+        # セットアップフェーズ中の駒選択のためのセットアップ
+        piece_options = []
+        piece_names = {
+            PieceType.SUI: "帥（王）",
+            PieceType.DAI: "大（飛車+斜め）",
+            PieceType.CHUU: "中（角行+直線）",
+            PieceType.SHO: "小（金将）",
+            PieceType.SAMURAI: "侍",
+            PieceType.HYO: "兵（前後歩兵）",
+            PieceType.UMA: "馬（2マス直線）",
+            PieceType.SHINOBI: "忍（斜め1-2マス）",
+            PieceType.YARI: "槍（侍+前2マス）",
+            PieceType.TORIDE: "砦（防御駒）",
+            PieceType.YUMI: "弓（飛び越え）",
+            PieceType.TSUTU: "筒（飛び越え）",
+            PieceType.HOU: "砲（飛び越え）",
+            PieceType.BOU: "謀（スパイ）"
+        }
+        for pt in PieceType:
+            piece_options.append((piece_names[pt], pt))
+
+        self.piece_selector = widgets.Dropdown(
+            options=piece_options,
+            description='駒:',
+            disabled=False,
+        )
+
+        # 位置入力
+        self.row_input = widgets.BoundedIntText(
+            value=0,
+            min=0,
+            max=8,
+            description='行:',
+            disabled=False
+        )
+
+        self.col_input = widgets.BoundedIntText(
+            value=0,
+            min=0,
+            max=8,
+            description='列:',
+            disabled=False
+        )
+
+        # 異なるアクション用のボタン
+        self.place_button = widgets.Button(description="駒を配置")
+        self.place_button.on_click(self.on_place_piece)
+
+        self.done_button = widgets.Button(description="配置完了")
+        self.done_button.on_click(self.on_done_setup)
+
+        self.select_button = widgets.Button(description="駒を選択")
+        self.select_button.on_click(self.on_select_position)
+
+        self.move_button = widgets.Button(description="移動先を指定")
+        self.move_button.on_click(self.on_move_to_position)
+
+        self.place_new_button = widgets.Button(description="新しい駒を配置")
+        self.place_new_button.on_click(self.on_place_new_piece)
+
+        # ウィジェットのレイアウト
+        self.controls = widgets.VBox([
+            widgets.HBox([self.row_input, self.col_input]),
+            self.piece_selector,
+            widgets.HBox([self.place_button, self.done_button]),
+            widgets.HBox([self.select_button, self.move_button, self.place_new_button])
+        ])
+
+        # UIの更新
+        self.update_ui()
+
+    def update_ui(self):
+        """現在のゲーム状態を反映するためにUIを更新"""
+        with self.output:
+            clear_output(wait=True)
+
+            # ゲームが終了しているか確認
+            winner = self.game.get_winner()
+            if winner:
+                # 勝者を表示する特別なメッセージ
+                winner_text = "黒（先手）" if winner == Player.BLACK else "白（後手）"
+                print(self.message)
+                print("\n" + "=" * 40)
+                print(f"勝者: {winner_text}")
+                print("=" * 40 + "\n")
+            else:
+                print(self.message)
+
+            print(self.game)
+
+            if self.selected_position:
+                row, col = self.selected_position
+                print(f"\n選択された位置: ({row}, {col})")
+
+            # ゲーム終了した場合のUI調整
+            if self.game.get_winner():
+                self.place_button.disabled = True
+                self.done_button.disabled = True
+                self.select_button.disabled = True
+                self.move_button.disabled = True
+                self.place_new_button.disabled = True
+                if hasattr(self, 'resign_button'):
+                    self.resign_button.disabled = True
+            else:
+                # 通常のゲームフェーズに基づく有効/無効化
+                if self.game.phase == GamePhase.SETUP:
+                    self.place_button.disabled = False
+                    self.done_button.disabled = False
+                    self.select_button.disabled = True
+                    self.move_button.disabled = True
+                    self.place_new_button.disabled = True
+                    if hasattr(self, 'resign_button'):
+                        self.resign_button.disabled = False
+                else:  # GamePhase.PLAY
+                    self.place_button.disabled = True
+                    self.done_button.disabled = True
+                    self.select_button.disabled = False
+                    self.move_button.disabled = self.selected_position is None
+                    self.place_new_button.disabled = False
+                    if hasattr(self, 'resign_button'):
+                        self.resign_button.disabled = False
+
+    # GungiUI クラスの on_place_piece メソッドを修正
+    def on_place_piece(self, button):
+        """セットアップ中の駒の配置を処理"""
+        if self.game.phase != GamePhase.SETUP:
+            self.message = "セットアップフェーズ後は駒を配置できません。"
+            self.update_ui()
+            return
+
+        position = (self.row_input.value, self.col_input.value)
+        piece_type = self.piece_selector.value
+
+        # デバッグ情報
+        print(f"配置試行: {position} に {piece_type.name}, 現在の手番: {'黒' if self.game.current_player == Player.BLACK else '白'}")
+
+        success = self.game.place_piece(position, piece_type)
+
+        if success:
+            self.message = f"{position}に{piece_type.name}を配置しました。"
+            # デバッグ情報
+            print(f"配置成功: 次の手番: {'黒' if self.game.current_player == Player.BLACK else '白'}")
+            # 最初のターンの後、次のプレイヤーに帥を配置するよう促す
+            if self.game.move_count == 1:
+                self.message += " 白プレイヤー、帥（王）を配置してください。"
+        else:
+            self.message = f"{position}に{piece_type.name}を配置できませんでした。"
+            # デバッグ情報
+            print(f"配置失敗: 理由を確認")
+
+        self.update_ui()
+
+    def on_done_setup(self, button):
+        """セットアップフェーズの完了を処理"""
+        if self.game.phase != GamePhase.SETUP:
+            self.message = "セットアップフェーズはすでに完了しています。"
+            self.update_ui()
+            return
+
+        success = self.game.declare_setup_complete()
+
+        if success:
+            if self.game.phase == GamePhase.PLAY:
+                self.message = "両プレイヤーがセットアップを完了しました。プレイフェーズが始まります！"
+            else:
+                self.message = f"{'黒' if self.game.current_player == Player.BLACK else '白'}プレイヤー、セットアップを完了してください。"
+        else:
+            self.message = "セットアップを完了できませんでした。"
+
+        self.update_ui()
+
+    def on_select_position(self, button):
+        """盤面上の位置の選択を処理"""
+        if self.game.phase != GamePhase.PLAY:
+            self.message = "セットアップフェーズ中は位置を選択できません。"
+            self.update_ui()
+            return
+
+        position = (self.row_input.value, self.col_input.value)
+
+        if not self.game.board.is_occupied(position):
+            self.message = "その位置に駒はありません。"
+            self.selected_position = None
+        else:
+            top_piece = self.game.board.get_top_piece(position)
+            if top_piece.owner != self.game.current_player:
+                self.message = "その駒は相手のものです。"
+                self.selected_position = None
+            else:
+                self.selected_position = position
+                stack_level = self.game.board.get_top_stack_level(position)
+                possible_moves = top_piece.get_possible_moves(position, self.game.board, stack_level)
+                self.message = f"{position}の{top_piece.piece_type.name}を選択しました。可能な移動先: {possible_moves}"
+
+        self.update_ui()
+
+    def on_move_to_position(self, button):
+        """駒を新しい位置に移動させる処理"""
+        if self.game.phase != GamePhase.PLAY:
+            self.message = "セットアップフェーズ中は駒を移動できません。"
+            self.update_ui()
+            return
+
+        if self.selected_position is None:
+            self.message = "まず移動する駒を選択してください。"
+            self.update_ui()
+            return
+
+        to_position = (self.row_input.value, self.col_input.value)
+
+        # 移動先に敵の帥があるか確認
+        target_is_enemy_sui = False
+        if self.game.board.is_occupied(to_position):
+            target_piece = self.game.board.get_top_piece(to_position)
+            if target_piece and target_piece.owner != self.game.current_player and target_piece.piece_type == PieceType.SUI:
+                target_is_enemy_sui = True
+
+        success = self.game.move_piece(self.selected_position, to_position)
+
+        if success:
+            self.message = f"{self.selected_position}から{to_position}に駒を移動しました。"
+            self.selected_position = None
+
+            # 勝利条件を確認
+            winner = self.game.get_winner()
+            if winner:
+                winner_text = "黒（先手）" if winner == Player.BLACK else "白（後手）"
+                if target_is_enemy_sui:
+                    self.message = f"ゲーム終了！ {winner_text}プレイヤーが相手の帥を取りました！{winner_text}の勝利です！"
+                else:
+                    self.message = f"ゲーム終了！ {winner_text}プレイヤーの勝利です！相手の帥が詰みました！"
+        else:
+            self.message = f"{self.selected_position}から{to_position}に移動できませんでした。"
+
+        self.update_ui()
+
+    def on_place_new_piece(self, button):
+        """プレイフェーズ中の新しい駒の配置を処理"""
+        if self.game.phase != GamePhase.PLAY:
+            self.message = "セットアップフェーズ中は新しい駒を配置できません。"
+            self.update_ui()
+            return
+
+        position = (self.row_input.value, self.col_input.value)
+        piece_type = self.piece_selector.value
+
+        success = self.game.place_new_piece(position, piece_type)
+
+        if success:
+            self.message = f"{position}に新しい{piece_type.name}を配置しました。"
+        else:
+            self.message = f"{position}に新しい{piece_type.name}を配置できませんでした。"
+
+        self.update_ui()
+
+    def display(self):
+        """メインUIを表示"""
+        return widgets.VBox([self.controls, self.output])
+
+
+def start_gungi_game():
+    """新しい軍議ゲームを開始"""
+    ui = GungiUI()
+    display(ui.display())
+    return ui
+
+
+# 駒タイプをユニコード記号にマッピングするためのヘルパー関数
+def get_piece_symbol(piece_type, player):
+    """駒タイプとプレイヤーに対応するユニコード記号を返す"""
+    black_symbols = {
+        PieceType.SUI: "♚",     # 王
+        PieceType.DAI: "♜",     # 飛車
+        PieceType.CHUU: "♝",    # 角行
+        PieceType.SHO: "♞",     # 金将
+        PieceType.SAMURAI: "⛩️",  # 侍
+        PieceType.HYO: "♟",     # 歩兵
+        PieceType.UMA: "🐎",     # 馬
+        PieceType.SHINOBI: "👥",  # 忍者
+        PieceType.YARI: "⚔️",     # 槍
+        PieceType.TORIDE: "🏯",   # 砦
+        PieceType.YUMI: "🏹",     # 弓
+        PieceType.TSUTU: "🔫",    # 筒
+        PieceType.HOU: "💣",     # 砲
+        PieceType.BOU: "🕵️",     # 謀
+    }
+
+    white_symbols = {
+        PieceType.SUI: "♔",     # 王
+        PieceType.DAI: "♖",     # 飛車
+        PieceType.CHUU: "♗",    # 角行
+        PieceType.SHO: "♘",     # 金将
+        PieceType.SAMURAI: "⛩️",  # 侍
+        PieceType.HYO: "♙",     # 歩兵
+        PieceType.UMA: "🐎",     # 馬
+        PieceType.SHINOBI: "👥",  # 忍者
+        PieceType.YARI: "⚔️",     # 槍
+        PieceType.TORIDE: "🏯",   # 砦
+        PieceType.YUMI: "🏹",     # 弓
+        PieceType.TSUTU: "🔫",    # 筒
+        PieceType.HOU: "💣",     # 砲
+        PieceType.BOU: "🕵️",     # 謀
+    }
+
+    return black_symbols[piece_type] if player == Player.BLACK else white_symbols[piece_type]
+
+
+# 将来の実装のためのAI対戦フレームワーク
+class AIPlayer:
+    """AI対戦相手の基本クラス"""
+    def __init__(self, color: Player, difficulty: str = "easy"):
+        self.color = color
+        self.difficulty = difficulty
+        self.unplaced_pieces = {}
+
+        # 未配置の駒セットを初期化
+        for piece_type, count in PIECE_COUNTS.items():
+            self.unplaced_pieces[piece_type] = count
+
+    def get_unplaced_count(self, piece_type: PieceType) -> int:
+        """指定されたタイプの未配置駒の数を返す"""
+        return self.unplaced_pieces.get(piece_type, 0)
+
+    def decrement_unplaced(self, piece_type: PieceType) -> bool:
+        """指定されたタイプの未配置駒の数を減らす"""
+        if self.get_unplaced_count(piece_type) <= 0:
+            return False
+        self.unplaced_pieces[piece_type] -= 1
+        return True
+
+    def increment_unplaced(self, piece_type: PieceType) -> None:
+        """指定されたタイプの未配置駒の数を増やす"""
+        self.unplaced_pieces[piece_type] = self.get_unplaced_count(piece_type) + 1
+
+    def has_spy_conversion_available(self, enemy_piece_type: PieceType) -> bool:
+        """スパイ変換に使用可能な未配置駒があるか確認"""
+        return self.get_unplaced_count(enemy_piece_type) > 0
+
+    def make_setup_move(self, game: Game) -> Tuple[Union[Tuple[int, int], None], Union[PieceType, None], bool]:
+        """セットアップフェーズ中に移動を行う
+
+        戻り値:
+            (位置, 駒タイプ, 完了フラグ)のタプル
+            完了フラグがTrueの場合、AIはセットアップを完了した
+        """
+        # 具体的なAIクラスで実装される
+        raise NotImplementedError
+
+    def make_play_move(self, game: Game) -> Union[Tuple[Tuple[int, int], Tuple[int, int]], Tuple[Tuple[int, int], PieceType]]:
+        """プレイフェーズ中に移動を行う
+
+        戻り値:
+            駒を移動する場合は (from_pos, to_pos)
+            新しい駒を配置する場合は (position, piece_type)
+        """
+        # 具体的なAIクラスで実装される
+        raise NotImplementedError
+
+
+class RandomAI(AIPlayer):
+    """合法手からランダムに選ぶシンプルなAI"""
+    def make_setup_move(self, game: Game) -> Tuple[Union[Tuple[int, int], None], Union[PieceType, None], bool]:
+        """セットアップフェーズ中にランダムな手を指す"""
+        # 最初の手は必ず帥（王）を配置
+        if game.move_count == 0 or (game.move_count == 1 and game.current_player == Player.WHITE):
+            piece_type = PieceType.SUI
+
+            # プレイヤーの領域内のランダムな位置を選択
+            if self.color == Player.BLACK:
+                row = np.random.randint(6, 9)  # 黒の領域
+            else:
+                # 白は具体的に指定（ランダム性を減らす）
+                row = np.random.randint(0, 3)  # 白の領域
+
+            col = np.random.randint(0, 9)
+
+            print(f"AI: 帥を配置します - 位置: ({row}, {col})")
+            return ((row, col), piece_type, False)
+
+        # 駒を配置するか、セットアップ完了を宣言するかをランダムに決定
+        if np.random.random() < 0.9:  # 90%の確率で駒を配置
+            # まだ利用可能な駒タイプからランダムに選択
+            available_types = [pt for pt in PieceType if self.get_unplaced_count(pt) > 0]
+            if not available_types:
+                print("AI: 配置可能な駒がないため、セットアップ完了を宣言します")
+                return (None, None, True)  # 駒が残っていない場合、セットアップ完了
+
+            piece_type = np.random.choice(available_types)
+
+            # プレイヤーの領域内のランダムな位置を選択
+            if self.color == Player.BLACK:
+                row = np.random.randint(6, 9)  # 黒の領域
+            else:
+                row = np.random.randint(0, 3)  # 白の領域
+
+            col = np.random.randint(0, 9)
+
+            # 位置が既に占有されているか確認
+            attempts = 0
+            max_attempts = 50  # 最大試行回数
+            while game.board.is_occupied((row, col)) and attempts < max_attempts:
+                # 別の位置を試す
+                if self.color == Player.BLACK:
+                    row = np.random.randint(6, 9)
+                else:
+                    row = np.random.randint(0, 3)
+                col = np.random.randint(0, 9)
+                attempts += 1
+
+            if attempts >= max_attempts:
+                print("AI: 空きスペースが見つからないため、セットアップ完了を宣言します")
+                return (None, None, True)
+
+            print(f"AI: {piece_type.name}を配置します - 位置: ({row}, {col})")
+            return ((row, col), piece_type, False)
+        else:
+            # セットアップ完了を宣言
+            print("AI: セットアップ完了を宣言します")
+            return (None, None, True)
+
+
+    def make_play_move(self, game: Game) -> Union[Tuple[Tuple[int, int], Tuple[int, int]], Tuple[Tuple[int, int], PieceType]]:
+        """プレイフェーズ中にランダムな合法手を指す"""
+        # 可能な全ての手を収集
+        possible_moves = []
+
+        # 既存の駒の移動
+        for row in range(BOARD_SIZE):
+            for col in range(BOARD_SIZE):
+                position = (row, col)
+                if game.board.is_occupied(position):
+                    piece = game.board.get_top_piece(position)
+                    if piece.owner == self.color:
+                        stack_level = game.board.get_top_stack_level(position)
+                        moves = piece.get_possible_moves(position, game.board, stack_level)
+                        for to_pos in moves:
+                            possible_moves.append(("move", position, to_pos))
+
+        # 新しい駒の配置
+        for piece_type in PieceType:
+            if self.get_unplaced_count(piece_type) > 0:
+                frontline = game.get_frontline(self.color)
+
+                for col in range(BOARD_SIZE):
+                    if self.color == Player.BLACK:
+                        # 黒の駒は前線以降に配置する必要がある
+                        valid_rows = range(frontline, BOARD_SIZE)
+                    else:
+                        # 白の駒は前線以降に配置する必要がある
+                        valid_rows = range(0, frontline + 1)
+
+                    for row in valid_rows:
+                        position = (row, col)
+                        if not game.board.is_occupied(position):
+                            possible_moves.append(("place", position, piece_type))
+
+        # ランダムな手を選択 - NumPyのrandom.choiceではなくPythonの標準ライブラリを使用
+        if possible_moves:
+            import random
+            move = random.choice(possible_moves)
+            move_type = move[0]
+
+            if move_type == "move":
+                from_pos, to_pos = move[1], move[2]
+                return (from_pos, to_pos)
+            else:  # "place"
+                position, piece_type = move[1], move[2]
+                return (position, piece_type)
+
+        # 合法手がない
+        return None
+
+class GungiGameWithAI:
+    """AIとの対戦をサポートする拡張ゲームクラス"""
+    def __init__(self, black_player="human", white_player="human", ai_difficulty="easy"):
+        self.game = Game()
+
+        # プレイヤーのセットアップ
+        if black_player == "human":
+            self.black_player = HumanPlayer(Player.BLACK)
+        else:
+            self.black_player = RandomAI(Player.BLACK, difficulty=ai_difficulty)
+
+        if white_player == "human":
+            self.white_player = HumanPlayer(Player.WHITE)
+        else:
+            self.white_player = RandomAI(Player.WHITE, difficulty=ai_difficulty)
+
+        self.game.players = {
+            Player.BLACK: self.black_player,
+            Player.WHITE: self.white_player
+        }
+
+        self.ui = None
+
+    def get_current_player_type(self):
+        """現在のプレイヤーが人間かAIかを返す"""
+        if self.game.current_player == Player.BLACK:
+            return "human" if isinstance(self.black_player, HumanPlayer) else "ai"
+        else:
+            return "human" if isinstance(self.white_player, HumanPlayer) else "ai"
+
+    def make_ai_move(self):
+        """AI プレイヤーの手を指す"""
+        if self.game.get_winner():
+            print("ゲームは既に終了しています")
+            return
+
+        ai_player = self.game.players[self.game.current_player]
+
+        if self.game.phase == GamePhase.SETUP:
+            print(f"AI（{'黒' if self.game.current_player == Player.BLACK else '白'}）: セットアップフェーズの手を考えています...")
+            position, piece_type, done_flag = ai_player.make_setup_move(self.game)
+
+            if done_flag:
+                print("AI: セットアップ完了を宣言します")
+                success = self.game.declare_setup_complete()
+                if not success:
+                    print("AIはセットアップを完了できませんでした。")
+            elif position and piece_type:
+                print(f"AI: {position}に{piece_type.name}を配置します")
+                success = self.game.place_piece(position, piece_type)
+                if success:
+                    print(f"AI: {position}に{piece_type.name}の配置に成功しました")
+                else:
+                    print(f"AIは{position}に{piece_type.name}を配置できませんでした。")
+        else:  # GamePhase.PLAY
+            print(f"AI（{'黒' if self.game.current_player == Player.BLACK else '白'}）: プレイフェーズの手を考えています...")
+            move = ai_player.make_play_move(self.game)
+
+            if move:
+                if isinstance(move[1], PieceType):
+                    # 新しい駒を配置
+                    position, piece_type = move
+                    success = self.game.place_new_piece(position, piece_type)
+                    if success:
+                        print(f"AI: {position}に新しい{piece_type.name}の配置に成功しました")
+                    else:
+                        print(f"AIは{position}に新しい{piece_type.name}を配置できませんでした。")
+                else:
+                    # 駒を移動
+                    from_pos, to_pos = move
+                    success = self.game.move_piece(from_pos, to_pos)
+                    if success:
+                        print(f"AI: {from_pos}から{to_pos}への移動に成功しました")
+                    else:
+                        print(f"AIは{from_pos}から{to_pos}に移動できませんでした。")
+
+
+    def update_ui(self):
+        """AI移動後にUIを更新"""
+        if self.ui:
+            self.ui.update_ui()
+
+    def start_game(self):
+        """ゲームを開始しUIを作成"""
+        self.ui = GungiUIWithAI(self)
+        display(self.ui.display())
+
+        # 最初のプレイヤーがAIなら、手を指す
+        if self.get_current_player_type() == "ai":
+            print("最初の手はAIが指します...")
+            self.make_ai_move()
+            self.ui.update_ui()
+
+
+class GungiUIWithAI(GungiUI):
+    """AIとの対戦をサポートする拡張UIクラス"""
+    def __init__(self, game_with_ai):
+        self.game_with_ai = game_with_ai
+        self.game = game_with_ai.game
+        self.selected_position = None
+        self.message = "軍議へようこそ！セットアップフェーズ: まず帥（王）を配置してください。"
+
+        # ウィジェットのセットアップ
+        self.setup_widgets()
+
+    def update_ui(self):
+        """現在のゲーム状態を反映するためにUIを更新"""
+        super().update_ui()
+
+        # ゲームが終了している場合はAIを動かさない
+        if self.game.get_winner():
+            return
+
+        # AIの番なら、手を指す
+        if self.game_with_ai.get_current_player_type() == "ai":
+            self.message = "AIが考えています..."
+            with self.output:
+                clear_output(wait=True)
+                print(self.message)
+                print(self.game)
+
+            # AI の手を実行
+            try:
+                print("AIが行動を選択中...")
+                self.game_with_ai.make_ai_move()
+                print("AI行動完了")
+            except Exception as e:
+                print(f"AIエラー: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
+            # 勝利条件を確認
+            winner = self.game.get_winner()
+            if winner:
+                winner_text = "黒（先手）" if winner == Player.BLACK else "白（後手）"
+                if hasattr(self.game, '_captured_sui') and self.game._captured_sui:
+                    self.message = f"ゲーム終了！ {winner_text}プレイヤー（AI）が相手の帥を取りました！{winner_text}の勝利です！"
+                else:
+                    self.message = f"ゲーム終了！ {winner_text}プレイヤー（AI）の勝利です！相手の帥が詰みました！"
+            else:
+                self.message = "AIが手を指しました。あなたの番です。"
+
+            # 更新した盤面を表示
+            with self.output:
+                clear_output(wait=True)
+                print(self.message)
+                print(self.game)
+
+
+def start_gungi_game_vs_ai(black_player="human", white_player="ai", ai_difficulty="easy"):
+    """ColabでAI対戦の新しい軍議ゲームを開始"""
+    game = GungiGameWithAI(black_player, white_player, ai_difficulty)
+    game.start_game()
+    return game
+
+
+# 使用方法説明
+def gungi_help():
+    """軍議のプレイ方法に関するヘルプ情報を表示"""
+    help_text = """
+    # 軍議 - プレイ方法
+
+    ## セットアップフェーズ
+    1. 各プレイヤーは交互に盤面の自分側に駒を配置します。
+    2. まず、各プレイヤーは帥（王）駒を配置する必要があります。
+    3. 駒を配置した後、「配置完了」をクリックしてセットアップを終了します。
+    4. 両プレイヤーがセットアップを完了するとゲームが始まります。
+
+    ## プレイフェーズ
+    1. プレイヤーは交互に駒を移動するか、予備から新しい駒を配置します。
+    2. 駒を移動するには:
+       - 「駒を選択」をクリックして駒を選びます
+       - 移動先の座標を入力します
+       - 「移動先を指定」をクリックします
+    3. 新しい駒を配置するには:
+       - ドロップダウンから駒のタイプを選びます
+       - 座標を入力します
+       - 「新しい駒を配置」をクリックします
+
+    ## 勝利条件
+    相手の帥（王）駒を詰ませることが目標です。
+
+    ## 重ね駒のルール
+    - 駒は最大3段まで積み重ねることができます
+    - 高い位置にある駒は低い位置の駒に対して優位です
+    - 謀（スパイ）のような特殊駒は特別な能力を持っています
+
+    駒の動きと特殊ルールの詳細については、ドキュメントを参照してください。
+    """
+
+    display(HTML(f"<div style='background-color:#f9f9f9; padding:15px; border-radius:5px;'><pre>{help_text}</pre></div>"))
