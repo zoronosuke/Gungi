@@ -77,18 +77,13 @@ class Rules:
             elif target_piece.owner != player:
                 # 敵の駒がいる場合
                 
-                # 敵の帥を取る（勝利条件）
-                if target_piece.piece_type == PieceType.SUI:
-                    move = Move.create_capture_move(from_pos, to_pos, player)
-                    legal_moves.append(move)
-                    continue
-                
                 # 敵の駒を取る
                 move = Move.create_capture_move(from_pos, to_pos, player)
                 legal_moves.append(move)
                 
                 # または敵の駒の上に重ねる（ツケ）
                 # 最大スタック高さをチェック＆帥の上には乗せられない
+                # 帥以外であれば、取るかツケるか選択できる
                 if to_stack_height < 3 and target_piece.can_be_stacked_on():
                     move = Move.create_stack_move(from_pos, to_pos, player)
                     legal_moves.append(move)
