@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>軍儀 - Gungi</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>軍儀 (Gungi)</h1>
+            <p class="subtitle">HUNTER×HUNTER のボードゲーム</p>
+        </header>
+
+        <div class="game-controls">
+            <button id="new-game-btn" class="btn btn-primary">新しいゲーム</button>
+            <button id="ai-move-btn" class="btn btn-secondary">AIに手を打たせる</button>
+            <div class="game-info">
+                <span id="current-player">先手（黒）の番</span>
+                <span id="move-count">手数: 0</span>
+            </div>
+        </div>
+
+        <div class="game-layout">
+            <div class="hand-pieces" id="hand-pieces-white">
+                <h3>後手（白）の持ち駒</h3>
+                <div id="hand-white-pieces" class="pieces-list"></div>
+            </div>
+
+            <div class="board-container">
+                <div class="board" id="board">
+                    <!-- 盤面はJavaScriptで動的に生成 -->
+                </div>
+            </div>
+
+            <div class="hand-pieces" id="hand-pieces-black">
+                <h3>先手（黒）の持ち駒</h3>
+                <div id="hand-black-pieces" class="pieces-list"></div>
+            </div>
+        </div>
+
+        <div class="move-history">
+            <h3>棋譜</h3>
+            <div id="history-list" class="history-list"></div>
+        </div>
+
+        <div class="status-message" id="status-message"></div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
