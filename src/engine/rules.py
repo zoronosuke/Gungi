@@ -65,10 +65,6 @@ class Rules:
             to_stack_level = board.get_top_piece_stack_level(to_pos)
             to_stack_height = board.get_stack_height(to_pos)
             
-            # 自分より高いスタックには移動できない（取ることもツケることもできない）
-            if to_stack_level > from_stack_level:
-                continue
-            
             if target_piece is None:
                 # 空マスへの移動
                 move = Move.create_normal_move(from_pos, to_pos, player)
@@ -77,16 +73,24 @@ class Rules:
             elif target_piece.owner != player:
                 # 敵の駒がいる場合
                 
-                # 敵の駒を取る
-                move = Move.create_capture_move(from_pos, to_pos, player)
-                legal_moves.append(move)
-                
-                # または敵の駒の上に重ねる（ツケ）
-                # 最大スタック高さをチェック＆帥の上には乗せられない
-                # 帥以外であれば、取るかツケるか選択できる
-                if to_stack_height < 3 and target_piece.can_be_stacked_on():
-                    move = Move.create_stack_move(from_pos, to_pos, player)
-                    legal_moves.append(move)
+                # 敵の帥は取るしかできない（勝利条件）
+                # 自分のスタックレベル >= 相手のスタックレベルの場合のみ取れる
+                if target_piece.piece_type == PieceType.SUI:
+                    if from_stack_level >= to_stack_level:
+                        move = Move.create_capture_move(from_pos, to_pos, player)
+                        legal_moves.append(move)
+                else:
+                    # 敵の駒を取る（自分のスタックレベル >= 相手のスタックレベル）
+                    if from_stack_level >= to_stack_level:
+                        move = Move.create_capture_move(from_pos, to_pos, player)
+                        legal_moves.append(move)
+                    
+                    # または敵の駒の上に重ねる（ツケ）
+                    # 最大スタック高さをチェック
+                    # ツケる場合はスタックレベルの制約はない（高い位置から低い位置にもツケられる）
+                    if to_stack_height < 3 and target_piece.can_be_stacked_on():
+                        move = Move.create_stack_move(from_pos, to_pos, player)
+                        legal_moves.append(move)
             
             else:
                 # 味方の駒がいる場合
