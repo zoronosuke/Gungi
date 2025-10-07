@@ -86,9 +86,13 @@ class Rules:
                         legal_moves.append(move)
                     
                     # または敵の駒の上に重ねる（ツケ）
-                    # 最大スタック高さをチェック
-                    # ツケる場合はスタックレベルの制約はない（高い位置から低い位置にもツケられる）
-                    if to_stack_height < 3 and target_piece.can_be_stacked_on():
+                    # 条件：
+                    # 1. 最大スタック高さ（3）未満
+                    # 2. 帥の上には乗せられない
+                    # 3. 自分のスタック高さ >= 相手のスタック高さ
+                    if (to_stack_height < 3 and 
+                        target_piece.can_be_stacked_on() and
+                        from_stack_height >= to_stack_height):
                         move = Move.create_stack_move(from_pos, to_pos, player)
                         legal_moves.append(move)
             
@@ -100,8 +104,13 @@ class Rules:
                     continue
                 
                 # 味方の駒の上に重ねる（ツケ）
-                # 最大スタック高さをチェック＆帥の上には乗せられない
-                if to_stack_height < 3 and target_piece.can_be_stacked_on():
+                # 条件：
+                # 1. 最大スタック高さ（3）未満
+                # 2. 帥の上には乗せられない
+                # 3. 自分のスタック高さ >= 相手のスタック高さ
+                if (to_stack_height < 3 and 
+                    target_piece.can_be_stacked_on() and
+                    from_stack_height >= to_stack_height):
                     move = Move.create_stack_move(from_pos, to_pos, player)
                     legal_moves.append(move)
         
