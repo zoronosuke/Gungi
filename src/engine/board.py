@@ -195,9 +195,22 @@ class Board:
         
         return True
 
-    def capture_piece(self, position: Tuple[int, int]) -> Optional[Piece]:
-        """指定位置の駒を取る（盤面から除去）"""
-        return self.remove_piece(position)
+    def capture_piece(self, position: Tuple[int, int]) -> List[Piece]:
+        """
+        指定位置の駒スタック全体を取る（盤面から除去）
+        軍儀のルール: 駒を取るときは、そのマスの駒全部を取る
+        返り値: 取った駒のリスト（下から上への順）
+        """
+        captured_pieces = []
+        stack = self.get_stack(position)
+        
+        # スタック内の全ての駒を取得
+        while not stack.is_empty():
+            piece = self.remove_piece(position)
+            if piece:
+                captured_pieces.append(piece)
+        
+        return captured_pieces
 
     def get_sui_position(self, player: Player) -> Optional[Tuple[int, int]]:
         """指定プレイヤーの帥の位置を取得"""

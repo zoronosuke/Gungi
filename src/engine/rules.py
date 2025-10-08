@@ -154,31 +154,49 @@ class Rules:
                 possible_positions.append((target_row, target_col))
             else:
                 # ジャンプできない駒は中間マスをチェック
-                # 移動距離が2以上の場合、途中に駒があれば移動不可
-                abs_dr = abs(dr)
-                abs_dc = abs(dc)
-                max_dist = max(abs_dr, abs_dc)
+                # 弓などの駒は特定のマスに直接ジャンプするため、
+                # 途中のマスに駒があっても到達可能な範囲かどうかをチェック
+                # 
+                # 例: (7,4)から[-3, 2]への移動 -> (4, 6)
+                # 途中: (6, 4.67), (5, 5.33) は無効な座標
+                # この場合、直線的な動きではないので、途中チェックは不要
                 
-                if max_dist <= 1:
-                    # 1マス移動は常に可能
+                # 直線的な動きかどうかを判定
+                # - 直線: dr==0 または dc==0
+                # - 斜め: abs(dr) == abs(dc)
+                # - それ以外: チェック不要（特定マスへのジャンプ）
+                
+                is_straight = (dr == 0 or dc == 0)
+                is_diagonal = (abs(dr) == abs(dc) and dr != 0 and dc != 0)
+                
+                if not is_straight and not is_diagonal:
+                    # 特定マスへのジャンプ（桂馬の動きなど）- 途中チェック不要
                     possible_positions.append((target_row, target_col))
                 else:
-                    # 複数マス移動の場合、途中に駒がないか確認
+                    # 直線または斜めの移動 - 途中に駒があればブロック
                     path_clear = True
-                    steps = max_dist
-                    step_dr = dr // steps if dr != 0 else 0
-                    step_dc = dc // steps if dc != 0 else 0
+                    abs_dr = abs(dr)
+                    abs_dc = abs(dc)
+                    steps = max(abs_dr, abs_dc)
                     
-                    # 途中のマスをチェック
-                    for step in range(1, steps):
-                        check_row = row + step_dr * step
-                        check_col = col + step_dc * step
-                        if board.is_occupied((check_row, check_col)):
-                            path_clear = False
-                            break
-                    
-                    if path_clear:
+                    if steps <= 1:
+                        # 1マス移動は常に可能
                         possible_positions.append((target_row, target_col))
+                    else:
+                        # 複数マス移動の場合、途中に駒がないか確認
+                        step_dr = 1 if dr > 0 else (-1 if dr < 0 else 0)
+                        step_dc = 1 if dc > 0 else (-1 if dc < 0 else 0)
+                        
+                        # 途中のマスをチェック
+                        for step in range(1, steps):
+                            check_row = row + step_dr * step
+                            check_col = col + step_dc * step
+                            if board.is_occupied((check_row, check_col)):
+                                path_clear = False
+                                break
+                        
+                        if path_clear:
+                            possible_positions.append((target_row, target_col))
         
         return possible_positions
 
@@ -234,7 +252,13 @@ class Rules:
         player: Player,
         hand_pieces: dict
     ) -> List[Move]:
-        """持ち駒を打つ手を取得（新）"""
+        """
+        持ち駒を打つ手を取得（新）
+        軍儀のルール: 
+        - 自軍の最前線より前のマス（敵寄りのマス）には置けない
+        - 空マスまたは味方の駒の上に置ける（帥の上を除く）
+        - スタック高さ3未満
+        """
         drop_moves = []
         
         # 最前線の行を取得
@@ -249,13 +273,16 @@ class Rules:
                 for col in range(BOARD_SIZE):
                     pos = (row, col)
                     
-                    # 最前線より前には打てない
-                    if player == Player.BLACK:
-                        if frontline_row is not None and row < frontline_row:
-                            continue
-                    else:  # Player.WHITE
-                        if frontline_row is not None and row > frontline_row:
-                            continue
+                    # 最前線より前（敵寄り）には打てない
+                    if frontline_row is not None:
+                        if player == Player.BLACK:
+                            # 黒は上（小さい行番号）が前線なので、frontlineより小さい行には打てない
+                            if row < frontline_row:
+                                continue
+                        else:  # Player.WHITE
+                            # 白は下（大きい行番号）が前線なので、frontlineより大きい行には打てない
+                            if row > frontline_row:
+                                continue
                     
                     # 駒を打てる条件をチェック
                     if Rules._can_drop_piece_at(board, pos, piece_type, player):
@@ -272,22 +299,37 @@ class Rules:
     
     @staticmethod
     def _get_frontline_row(board: Board, player: Player) -> Optional[int]:
-        """指定プレイヤーの最前線の行を取得"""
+        """
+        指定プレイヤーの最前線の行を取得
+        
+        軍儀のルール: 
+        - 黒（先手）: 盤面下側から開始、上（小さい行番号）が敵側
+        - 白（後手）: 盤面上側から開始、下（大きい行番号）が敵側
+        - 最前線 = 最も敵側に近い自分の駒がある行
+        
+        返り値: 最前線の行番号、駒がない場合はNone
+        """
         frontline = None
         
         for row in range(BOARD_SIZE):
             for col in range(BOARD_SIZE):
                 stack = board.get_stack((row, col))
                 if not stack.is_empty():
-                    # 一番下の駒（最初に置かれた駒）をチェック
-                    bottom_piece = stack.get_piece_at_level(0)
-                    if bottom_piece and bottom_piece.owner == player:
+                    # スタック内のいずれかの駒が自分の駒ならその行を考慮
+                    has_own_piece = False
+                    for level in range(stack.get_height()):
+                        piece = stack.get_piece_at_level(level)
+                        if piece and piece.owner == player:
+                            has_own_piece = True
+                            break
+                    
+                    if has_own_piece:
                         if player == Player.BLACK:
-                            # 黒は小さい行番号が前線
+                            # 黒は小さい行番号が前線（敵側）
                             if frontline is None or row < frontline:
                                 frontline = row
                         else:  # Player.WHITE
-                            # 白は大きい行番号が前線
+                            # 白は大きい行番号が前線（敵側）
                             if frontline is None or row > frontline:
                                 frontline = row
         
@@ -300,12 +342,24 @@ class Rules:
         piece_type: PieceType,
         player: Player
     ) -> bool:
-        """指定位置に駒を打てるか確認"""
+        """
+        指定位置に駒を打てるか確認
+        
+        軍儀のルール:
+        - 空マスには打てる
+        - 味方の駒の上には打てる（帥の上を除く、スタック高さ3未満）
+        - 敵の駒の上には打てない
+        - 砦は他の駒の上に乗れない
+        """
         target_piece = board.get_top_piece(pos)
         stack_height = board.get_stack_height(pos)
         
         # スタック高さが3の場合は打てない
         if stack_height >= 3:
+            return False
+        
+        # 砦は他の駒の上に乗れない
+        if piece_type == PieceType.TORIDE and stack_height > 0:
             return False
         
         # 空マスには打てる
@@ -372,12 +426,18 @@ class Rules:
         return True
 
     @staticmethod
-    def apply_move(board: Board, move: Move, hand_pieces: dict = None) -> Tuple[bool, Optional[Piece]]:
+    def apply_move(board: Board, move: Move, hand_pieces: dict = None) -> Tuple[bool, Optional[List[Piece]]]:
         """
         盤面に手を適用する
-        返り値: (成功したらTrue, 取った駒)
+        
+        軍儀のルール:
+        - 駒を取るときは、そのマスの駒全部を取る
+        - 取った駒は自分の持ち駒として使えない（除外される）
+        - 持ち駒を「新」で配置できる
+        
+        返り値: (成功したらTrue, 取った駒のリスト)
         """
-        captured_piece = None
+        captured_pieces = None
         
         if move.move_type == MoveType.NORMAL:
             # 通常の移動
@@ -385,11 +445,12 @@ class Rules:
             return success, None
         
         elif move.move_type == MoveType.CAPTURE:
-            # 駒を取る
-            captured_piece = board.get_top_piece(move.to_pos)
-            board.capture_piece(move.to_pos)
+            # 駒を取る（スタック全体）
+            # 軍儀のルール: 駒を取るときは、そのマスの駒全部を取る
+            captured_pieces = board.capture_piece(move.to_pos)
             success = board.move_piece(move.from_pos, move.to_pos)
-            return success, captured_piece
+            # 取った駒は自分の持ち駒として使えない（除外される）
+            return success, captured_pieces
         
         elif move.move_type == MoveType.STACK:
             # 駒を重ねる
@@ -397,7 +458,7 @@ class Rules:
             return success, None
         
         elif move.move_type == MoveType.DROP:
-            # 持ち駒を打つ
+            # 持ち駒を打つ（新）
             piece = Piece(move.piece_type, move.player)
             success = board.add_piece(move.to_pos, piece)
             # 持ち駒から減らす

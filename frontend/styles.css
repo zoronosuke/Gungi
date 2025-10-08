@@ -88,6 +88,18 @@ h1 {
     box-shadow: 0 4px 12px rgba(72, 187, 120, 0.4);
 }
 
+.btn-info {
+    background: #3182ce;
+    color: white;
+    margin-left: 10px;
+}
+
+.btn-info:hover {
+    background: #2c5aa0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(49, 130, 206, 0.4);
+}
+
 .game-info {
     display: flex;
     gap: 30px;
@@ -129,6 +141,27 @@ h1 {
     border-radius: 4px;
     border: 2px solid #e2e8f0;
     font-size: 1.1em;
+    transition: all 0.2s ease;
+}
+
+.hand-piece.clickable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.hand-piece.clickable:hover {
+    background: #e6f3ff;
+    border-color: #667eea;
+    transform: translateY(-2px);
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.hand-piece.selected {
+    background: #667eea;
+    color: white;
+    border-color: #5568d3;
+    font-weight: bold;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
 }
 
 .no-pieces {
@@ -164,12 +197,27 @@ h1 {
     color: #333;
 }
 
+.col-labels span:first-child {
+    width: 30px; /* 左側のスペース */
+}
+
+.col-labels span:last-child {
+    width: 30px; /* 右側のスペース */
+}
+
 .board-row {
     display: flex;
     align-items: center;
 }
 
 .row-label {
+    width: 30px;
+    text-align: center;
+    font-weight: 600;
+    color: #333;
+}
+
+.row-label-right {
     width: 30px;
     text-align: center;
     font-weight: 600;

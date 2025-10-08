@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>軍儀 - 「新」の使い方</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+        }
+        h1 {
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.2em;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        .step {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .example {
+            background: #e6f3ff;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 10px 0;
+            border-left: 3px solid #48bb78;
+        }
+        .warning {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 10px 0;
+            border-left: 3px solid #ffc107;
+        }
+        .button-demo {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: all 0.3s;
+            text-align: center;
+        }
+        .button-demo:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        .visual-guide {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+        }
+        .piece-box {
+            background: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            border: 2px solid #e2e8f0;
+            font-size: 1.3em;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        .piece-box.selectable {
+            cursor: pointer;
+        }
+        .piece-box.selectable:hover {
+            background: #e6f3ff;
+            border-color: #667eea;
+            transform: translateY(-2px);
+        }
+        .piece-box.selected {
+            background: #667eea;
+            color: white;
+            border-color: #5568d3;
+            font-weight: bold;
+        }
+        .board-demo {
+            display: grid;
+            grid-template-columns: repeat(5, 50px);
+            gap: 2px;
+            margin: 20px auto;
+            width: fit-content;
+        }
+        .cell-demo {
+            width: 50px;
+            height: 50px;
+            background: #f5deb3;
+            border: 1px solid #8b7355;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2em;
+        }
+        .cell-demo.legal {
+            background: #90ee90;
+            cursor: pointer;
+        }
+        .cell-demo.legal:hover {
+            background: #7fd87f;
+        }
+        ul {
+            margin-left: 20px;
+            line-height: 1.8;
+        }
+        .tips {
+            background: #d4edda;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 3px solid #28a745;
+        }
+        .center {
+            text-align: center;
+            margin: 30px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 軍儀 - 「新」の使い方</h1>
+        <p class="subtitle">持ち駒を配置する方法</p>
+
+        <div class="section">
+            <h2>基本的な操作</h2>
+            
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>持ち駒を選択</strong>
+                <p>画面左右の持ち駒エリアから、配置したい駒をクリックします。</p>
+                
+                <div class="visual-guide">
+                    <div class="piece-box selectable" onclick="selectDemo(this)">
+                        兵 × 1
+                    </div>
+                    <div class="piece-box selectable" onclick="selectDemo(this)">
+                        槍 × 2
+                    </div>
+                    <div class="piece-box selectable" onclick="selectDemo(this)">
+                        馬 × 1
+                    </div>
+                </div>
+                <p style="text-align: center; color: #666; font-size: 0.9em;">↑ クリックして試してみてください</p>
+            </div>
+
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>配置場所を選択</strong>
+                <p>盤面上の緑色にハイライトされた場所をクリックして、駒を配置します。</p>
+                
+                <div class="board-demo">
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo legal" onclick="placeDemo(this)"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo legal" onclick="placeDemo(this)"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo legal" onclick="placeDemo(this)"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo">兵</div>
+                    <div class="cell-demo legal" onclick="placeDemo(this)"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo legal" onclick="placeDemo(this)"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                    <div class="cell-demo"></div>
+                </div>
+                <p style="text-align: center; color: #666; font-size: 0.9em;">緑色 = 配置可能な場所</p>
+            </div>
+
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>配置完了</strong>
+                <p>駒が配置され、自動的に手番が交代します。</p>
+                <div class="example">
+                    ✅ 「兵を配置しました」とメッセージが表示されます
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>配置のルール</h2>
+            
+            <div class="tips">
+                <strong>✓ 配置できる条件</strong>
+                <ul>
+                    <li>持ち駒がある</li>
+                    <li>自分の番である</li>
+                    <li>最前線より後ろ（敵寄りには置けない）</li>
+                    <li>空マスまたは味方の駒の上</li>
+                    <li>スタック高さが3未満</li>
+                </ul>
+            </div>
+
+            <div class="warning">
+                <strong>✗ 配置できない場合</strong>
+                <ul>
+                    <li>帥（王）の上</li>
+                    <li>敵の駒の上</li>
+                    <li>砦を他の駒の上</li>
+                    <li>最前線より前</li>
+                    <li>スタック高さが既に3</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>よくある質問</h2>
+            
+            <div class="example">
+                <strong>Q: 持ち駒をクリックしても反応しません</strong><br>
+                A: 相手の番、または持ち駒が0枚の可能性があります。画面上部の「○○の番」を確認してください。
+            </div>
+
+            <div class="example">
+                <strong>Q: 選択を解除するには？</strong><br>
+                A: 同じ駒をもう一度クリックするか、別の駒を選択してください。
+            </div>
+
+            <div class="example">
+                <strong>Q: スタックとは？</strong><br>
+                A: 味方の駒の上に駒を配置することで、駒が縦に重なります。スタックレベルが上がると駒が強化されます。
+            </div>
+        </div>
+
+        <div class="center">
+            <a href="index.html" class="button-demo">ゲームを始める</a>
+            <br><br>
+            <p style="color: #666;">
+                サーバーが起動していることを確認してください<br>
+                <code style="background: #f8f9fa; padding: 5px 10px; border-radius: 4px;">python run_server.py</code>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        function selectDemo(element) {
+            // 全ての選択を解除
+            document.querySelectorAll('.piece-box').forEach(box => {
+                box.classList.remove('selected');
+            });
+            // クリックした要素を選択
+            element.classList.add('selected');
+            alert('「' + element.textContent.trim() + '」を選択しました！\n次に盤面の緑色の場所をクリックしてください。');
+        }
+
+        function placeDemo(element) {
+            element.textContent = '兵';
+            element.classList.remove('legal');
+            element.style.background = '#f5deb3';
+            alert('駒を配置しました！\n実際のゲームでは手番が交代します。');
+            
+            // リセット
+            setTimeout(() => {
+                element.textContent = '';
+                element.classList.add('legal');
+                element.style.background = '';
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
