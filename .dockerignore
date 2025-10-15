@@ -1,0 +1,72 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+tests/
+test_*.py
+*_test.py
+pytest_cache/
+.pytest_cache/
+
+# Documentation
+*.md
+docs/
+*.txt
+!requirements.txt
+
+# Development files
+copilot_prompt.txt
+demo.txt
+やりたいこと.txt
+ルール.txt
+初期盤面.txt
+モデルの構成.txt
+
+# Egg info
+*.egg-info/
+
+# Build artifacts
+build/
+dist/
+*.egg
+
+# Deployment
+.gcloudignore
+cloudbuild.yaml
+deploy*.sh
+deploy*.ps1
+Dockerfile
+.dockerignore
+
+# Batch files
+*.bat
+*.ps1
+!deploy.ps1
+
+# Server run scripts (already in container)
+run_server.py
+start_server.*

@@ -5,9 +5,13 @@
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 import uuid
+import os
+from pathlib import Path
 
 from ..engine import (
     Board, Player, PieceType, Move, MoveType, Rules
@@ -19,6 +23,14 @@ app = FastAPI(
     description="軍儀ゲームのバックエンドAPI",
     version="1.0.0"
 )
+
+# 静的ファイルのディレクトリを設定
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+FRONTEND_DIR = BASE_DIR / "frontend"
+
+# 静的ファイルをマウント（CSS, JS, HTML）
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 # CORS設定（フロントエンドからのアクセスを許可）
 app.add_middleware(
@@ -347,6 +359,26 @@ async def delete_game(game_id: str):
     
     del games[game_id]
     return {"message": "ゲームを削除しました"}
+
+
+# ルートパスでフロントエンドを提供
+@app.get("/")
+async def serve_frontend():
+    """フロントエンドのindex.htmlを提供"""
+    index_file = FRONTEND_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return {"message": "軍儀 API サーバが稼働中です。/docs でAPIドキュメントを確認できます。"}
+
+
+# その他の静的ファイル（drop_guide.htmlなど）
+@app.get("/{filename}")
+async def serve_static_files(filename: str):
+    """静的ファイルを提供"""
+    file_path = FRONTEND_DIR / filename
+    if file_path.exists() and file_path.suffix in [".html", ".css", ".js"]:
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="ファイルが見つかりません")
 
 
 if __name__ == "__main__":

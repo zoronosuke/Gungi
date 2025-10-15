@@ -1,0 +1,37 @@
+# This file specifies files that are *not* uploaded to Google Cloud
+# using gcloud. It follows the same syntax as .gitignore
+
+.gcloudignore
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Documentation (except deployment docs)
+*.md
+!README_DEPLOY.md
+
+# Development files
+copilot_prompt.txt
+demo.txt

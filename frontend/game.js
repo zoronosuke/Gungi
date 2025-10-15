@@ -2,7 +2,10 @@
  * 軍儀 フロントエンド JavaScript
  */
 
-const API_BASE_URL = 'http://localhost:8003';
+// API URLを環境に応じて設定
+const API_BASE_URL = window.location.hostname === 'localhost' 
+    ? 'http://localhost:8003'
+    : window.location.origin;  // 本番環境では同じオリジンを使用
 
 // ゲーム状態
 let gameState = {
