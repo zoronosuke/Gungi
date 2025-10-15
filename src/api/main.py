@@ -208,10 +208,19 @@ async def apply_move(game_id: str, move_request: MoveRequest):
     
     # 取った駒を持ち駒に追加
     if captured_piece:
-        piece_type = captured_piece.piece_type
-        if piece_type in game_state.hand_pieces[game_state.current_player]:
-            game_state.hand_pieces[game_state.current_player][piece_type] += 1
+        # captured_pieceがリストの場合（スタックから取った場合）、最上位の駒を取得
+        if isinstance(captured_piece, list):
+            if len(captured_piece) > 0:
+                piece = captured_piece[-1]  # スタックの最上位
+                piece_type = piece.piece_type
+            else:
+                piece_type = None
         else:
+            piece_type = captured_piece.piece_type
+        
+        if piece_type and piece_type in game_state.hand_pieces[game_state.current_player]:
+            game_state.hand_pieces[game_state.current_player][piece_type] += 1
+        elif piece_type:
             game_state.hand_pieces[game_state.current_player][piece_type] = 1
     
     # 履歴に追加

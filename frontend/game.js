@@ -82,10 +82,12 @@ async function startNewGame() {
  * ゲーム状態を更新
  */
 function updateGameState(state) {
+    console.log('updateGameState called with:', state);
     gameState.board = state;  // 全体の状態を保存
     gameState.currentPlayer = state.current_player;
     gameState.moveCount = state.move_count;
     
+    // state.boardは盤面オブジェクトで、state.board.boardが実際の盤面配列
     renderBoard(state.board);
     renderHandPieces(state.hand_pieces);
     updateGameInfo();
@@ -103,6 +105,7 @@ function updateGameState(state) {
  * 盤面を描画
  */
 function renderBoard(boardData) {
+    console.log('renderBoard called with:', boardData);
     const boardElement = document.getElementById('board');
     boardElement.innerHTML = '';
     
@@ -113,6 +116,11 @@ function renderBoard(boardData) {
         `<span>${9 - i}</span>`
     ).join('') + '<span></span>'; // 右側にも空白を追加
     boardElement.appendChild(colLabels);
+    
+    // boardDataの構造: {board: Array(9), sui_positions: {...}}
+    // board配列を取得
+    const actualBoard = boardData.board || boardData;
+    console.log('actualBoard:', actualBoard);
     
     // 各行
     for (let row = 0; row < 9; row++) {
@@ -127,7 +135,7 @@ function renderBoard(boardData) {
             cell.dataset.col = col;
             
             // スタック（駒の重なり）を表示（下から上へ）
-            const stack = boardData.board[row][col];
+            const stack = actualBoard[row][col];
             if (stack && stack.length > 0) {
                 // スタックを逆順にして、一番上の駒（最後に追加された駒）が上に表示される
                 stack.slice().reverse().forEach((piece, displayIndex) => {
@@ -292,6 +300,7 @@ async function fetchAndDisplayDropMoves(pieceType) {
  */
 async function handleCellClick(row, col) {
     console.log(`クリック: (${row}, ${col})`);
+    console.log('gameState:', gameState);
     
     if (!gameState.gameId) {
         showMessage('先にゲームを開始してください', 'warning');
@@ -356,10 +365,35 @@ async function handleCellClick(row, col) {
  * 指定位置の一番上の駒を取得
  */
 function getTopPiece(row, col) {
-    if (!gameState.board || !gameState.board.board) return null;
-    const stack = gameState.board.board.board[row][col];
-    if (!stack || stack.length === 0) return null;
-    return stack[stack.length - 1];
+    console.log('getTopPiece called:', row, col);
+    if (!gameState.board) {
+        console.log('gameState.board is null');
+        return null;
+    }
+    
+    // gameState.boardは全体の状態オブジェクト
+    // gameState.board.board.boardが実際の盤面配列
+    let boardArray;
+    if (gameState.board.board && gameState.board.board.board) {
+        boardArray = gameState.board.board.board;
+    } else if (gameState.board.board && Array.isArray(gameState.board.board)) {
+        boardArray = gameState.board.board;
+    } else if (Array.isArray(gameState.board)) {
+        boardArray = gameState.board;
+    } else {
+        console.error('Invalid board structure:', gameState.board);
+        return null;
+    }
+    
+    const stack = boardArray[row][col];
+    console.log('stack at', row, col, ':', stack);
+    if (!stack || stack.length === 0) {
+        console.log('No piece at this position');
+        return null;
+    }
+    const topPiece = stack[stack.length - 1];
+    console.log('topPiece:', topPiece);
+    return topPiece;
 }
 
 /**
