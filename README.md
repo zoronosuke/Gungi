@@ -2,6 +2,12 @@
 
 『HUNTER×HUNTER』に登場する架空のボードゲーム「軍儀」を実装し、深層強化学習によるAI対戦をWebブラウザで実現するプロジェクトです。
 
+## 🎮 デモ
+
+**オンラインでプレイ**: [https://gungi-game-2urmfnxx4q-an.a.run.app/index.html](https://gungi-game-2urmfnxx4q-an.a.run.app/index.html)
+
+ブラウザで今すぐ軍儀をプレイできます！（GCP Cloud Run上でホスティング）
+
 ## プロジェクト構成
 
 ```
