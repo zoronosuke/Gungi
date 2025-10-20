@@ -26,19 +26,19 @@ if ($confirmation -ne 'y' -and $confirmation -ne 'Y') {
 
 # プロジェクトを設定
 Write-Host ""
-Write-Host "🔧 GCPプロジェクトを設定中..." -ForegroundColor Green
+Write-Host "GCPプロジェクトを設定中..." -ForegroundColor Green
 gcloud config set project $PROJECT_ID
 
 # 必要なAPIを有効化
 Write-Host ""
-Write-Host "🔌 必要なAPIを有効化中..." -ForegroundColor Green
+Write-Host "必要なAPIを有効化中..." -ForegroundColor Green
 gcloud services enable run.googleapis.com
 gcloud services enable cloudbuild.googleapis.com
 gcloud services enable artifactregistry.googleapis.com
 
 # デプロイ
 Write-Host ""
-Write-Host "🚀 Cloud Runにデプロイ中..." -ForegroundColor Green
+Write-Host "Cloud Runにデプロイ中..." -ForegroundColor Green
 Write-Host "   サービス名: $SERVICE_NAME"
 Write-Host "   リージョン: $REGION"
 Write-Host "   メモリ: $MEMORY"
@@ -57,17 +57,17 @@ gcloud run deploy $SERVICE_NAME `
   --platform managed
 
 Write-Host ""
-Write-Host "✅ デプロイが完了しました！" -ForegroundColor Green
+Write-Host "デプロイが完了しました！" -ForegroundColor Green
 Write-Host ""
 Write-Host "======================================" -ForegroundColor Cyan
-Write-Host "🎮 アプリケーションURL:" -ForegroundColor Yellow
+Write-Host "アプリケーションURL:" -ForegroundColor Yellow
 $url = gcloud run services describe $SERVICE_NAME --region $REGION --format='value(status.url)'
 Write-Host $url -ForegroundColor Cyan
 Write-Host "======================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "💡 ログを確認する場合:" -ForegroundColor Yellow
+Write-Host "ログを確認する場合:" -ForegroundColor Yellow
 Write-Host "   gcloud run logs read $SERVICE_NAME --region $REGION --limit 50"
 Write-Host ""
-Write-Host "💡 サービスを削除する場合:" -ForegroundColor Yellow
+Write-Host "サービスを削除する場合:" -ForegroundColor Yellow
 Write-Host "   gcloud run services delete $SERVICE_NAME --region $REGION"
 Write-Host ""

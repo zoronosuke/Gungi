@@ -349,8 +349,8 @@ async def predict(game_id: str, request: PredictRequest):
         if move.move_type == MoveType.CAPTURE:
             score += 100
             # 相手の帥を取る手は最優先
-            target_stack = game_state.board.get_stack(move.to_pos)
-            if target_stack and target_stack[-1].piece_type == PieceType.SUI:
+            target_piece = game_state.board.get_top_piece(move.to_pos)
+            if target_piece and target_piece.piece_type == PieceType.SUI:
                 score += 1000
         
         # NORMAL（通常移動）

@@ -131,6 +131,7 @@ class Rules:
         pattern = piece.get_move_pattern(stack_level)
         moves = pattern['moves']
         can_jump = pattern['canJump']
+        max_steps = pattern.get('maxSteps', 1)
         
         # プレイヤーによって方向を調整
         # 駒の動きパターンでは正の値=前方向と定義
@@ -143,52 +144,64 @@ class Rules:
             # プレイヤーに応じて方向を反転
             dr = dr * direction_multiplier
             
-            target_row = row + dr
-            target_col = col + dc
+            # 方向ベクトルを正規化（1マス分の移動量）
+            abs_dr = abs(dr)
+            abs_dc = abs(dc)
+            steps_in_move = max(abs_dr, abs_dc)
             
-            if not board.is_valid_position((target_row, target_col)):
+            if steps_in_move == 0:
                 continue
             
-            # ジャンプ可能な駒の場合は中間チェック不要
-            if can_jump:
-                possible_positions.append((target_row, target_col))
+            # 方向の単位ベクトル
+            step_dr = dr // steps_in_move if steps_in_move > 0 else 0
+            step_dc = dc // steps_in_move if steps_in_move > 0 else 0
+            
+            # 直線的な動きかどうかを判定
+            is_straight = (step_dr == 0 or step_dc == 0)
+            is_diagonal = (abs(step_dr) == abs(step_dc) and step_dr != 0 and step_dc != 0)
+            is_continuous = is_straight or is_diagonal
+            
+            if is_continuous and max_steps > 1:
+                # 連続移動可能な方向（飛車・角・龍王・龍馬など）
+                # maxSteps まで、または駒にぶつかるまで進む
+                for step in range(1, max_steps + 1):
+                    target_row = row + step_dr * step
+                    target_col = col + step_dc * step
+                    
+                    if not board.is_valid_position((target_row, target_col)):
+                        break
+                    
+                    # 駒があるか確認
+                    if board.is_occupied((target_row, target_col)):
+                        # 駒がある場合は、そこまでで止まる（取得またはツケは別途判定）
+                        possible_positions.append((target_row, target_col))
+                        break
+                    else:
+                        # 空マスなら追加して次へ
+                        possible_positions.append((target_row, target_col))
             else:
-                # ジャンプできない駒は中間マスをチェック
-                # 弓などの駒は特定のマスに直接ジャンプするため、
-                # 途中のマスに駒があっても到達可能な範囲かどうかをチェック
-                # 
-                # 例: (7,4)から[-3, 2]への移動 -> (4, 6)
-                # 途中: (6, 4.67), (5, 5.33) は無効な座標
-                # この場合、直線的な動きではないので、途中チェックは不要
+                # 固定位置への移動（王将、金将、桂馬など）
+                target_row = row + dr
+                target_col = col + dc
                 
-                # 直線的な動きかどうかを判定
-                # - 直線: dr==0 または dc==0
-                # - 斜め: abs(dr) == abs(dc)
-                # - それ以外: チェック不要（特定マスへのジャンプ）
+                if not board.is_valid_position((target_row, target_col)):
+                    continue
                 
-                is_straight = (dr == 0 or dc == 0)
-                is_diagonal = (abs(dr) == abs(dc) and dr != 0 and dc != 0)
-                
-                if not is_straight and not is_diagonal:
+                # ジャンプ可能な駒の場合は中間チェック不要
+                if can_jump:
+                    possible_positions.append((target_row, target_col))
+                elif not is_continuous:
                     # 特定マスへのジャンプ（桂馬の動きなど）- 途中チェック不要
                     possible_positions.append((target_row, target_col))
                 else:
                     # 直線または斜めの移動 - 途中に駒があればブロック
-                    path_clear = True
-                    abs_dr = abs(dr)
-                    abs_dc = abs(dc)
-                    steps = max(abs_dr, abs_dc)
-                    
-                    if steps <= 1:
+                    if steps_in_move <= 1:
                         # 1マス移動は常に可能
                         possible_positions.append((target_row, target_col))
                     else:
                         # 複数マス移動の場合、途中に駒がないか確認
-                        step_dr = 1 if dr > 0 else (-1 if dr < 0 else 0)
-                        step_dc = 1 if dc > 0 else (-1 if dc < 0 else 0)
-                        
-                        # 途中のマスをチェック
-                        for step in range(1, steps):
+                        path_clear = True
+                        for step in range(1, steps_in_move):
                             check_row = row + step_dr * step
                             check_col = col + step_dc * step
                             if board.is_occupied((check_row, check_col)):
@@ -459,12 +472,36 @@ class Rules:
         
         elif move.move_type == MoveType.DROP:
             # 持ち駒を打つ（新）
+            
+            # 持ち駒数のチェック
+            if hand_pieces is None or move.piece_type not in hand_pieces:
+                return False, None
+            
+            if hand_pieces[move.piece_type] <= 0:
+                return False, None
+            
+            # 打つ先のチェック
+            to_stack = board.get_stack(move.to_pos)
+            to_height = to_stack.get_height()
+            
+            # 1. 高さ3のスタックには打てない
+            if to_height >= 3:
+                return False, None
+            
+            # 2. 帥の上には打てない
+            if not to_stack.is_empty():
+                top_piece = to_stack.get_top_piece()
+                if top_piece and not top_piece.can_be_stacked_on():
+                    return False, None
+            
+            # 駒を配置
             piece = Piece(move.piece_type, move.player)
             success = board.add_piece(move.to_pos, piece)
+            
             # 持ち駒から減らす
-            if success and hand_pieces is not None:
-                if move.piece_type in hand_pieces and hand_pieces[move.piece_type] > 0:
-                    hand_pieces[move.piece_type] -= 1
+            if success:
+                hand_pieces[move.piece_type] -= 1
+            
             return success, None
         
         elif move.move_type == MoveType.SETUP:
