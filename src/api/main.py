@@ -316,7 +316,7 @@ async def get_legal_moves(game_id: str):
 async def predict(game_id: str, request: PredictRequest):
     """
     AIが次の手を予測する
-    現在は簡易的にランダムな合法手を返す
+    現在は簡易的に評価関数付きランダム選択
     将来的にはニューラルネット+MCTSで実装
     """
     if game_id not in games:
@@ -337,9 +337,55 @@ async def predict(game_id: str, request: PredictRequest):
     if not legal_moves:
         raise HTTPException(status_code=400, detail="合法手がありません")
     
-    # 現在は最初の合法手を返す（将来はAIで選択）
+    # 簡易評価関数で手を選択
     import random
-    best_move = random.choice(legal_moves)
+    
+    # 手の優先度を評価
+    move_scores = []
+    for move in legal_moves:
+        score = 0
+        
+        # CAPTURE（駒を取る手）を優先
+        if move.move_type == MoveType.CAPTURE:
+            score += 100
+            # 相手の帥を取る手は最優先
+            target_stack = game_state.board.get_stack(move.to_pos)
+            if target_stack and target_stack[-1].piece_type == PieceType.SUI:
+                score += 1000
+        
+        # NORMAL（通常移動）
+        elif move.move_type == MoveType.NORMAL:
+            score += 10
+            # 前進する手を少し優先
+            if game_state.current_player == Player.BLACK:
+                score += max(0, move.from_pos[0] - move.to_pos[0])  # 上方向への移動
+            else:
+                score += max(0, move.to_pos[0] - move.from_pos[0])  # 下方向への移動
+        
+        # STACK（ツケ）
+        elif move.move_type == MoveType.STACK:
+            score += 50
+        
+        # DROP（新）
+        elif move.move_type == MoveType.DROP:
+            score += 30
+            # 前線に近い位置への配置を優先
+            if game_state.current_player == Player.BLACK:
+                score += (8 - move.to_pos[0]) * 2  # 上方向が前線
+            else:
+                score += move.to_pos[0] * 2  # 下方向が前線
+        
+        # ランダム要素を追加（同じスコアでもバリエーションを持たせる）
+        score += random.random() * 5
+        
+        move_scores.append((move, score))
+    
+    # スコアでソートして上位から選択（確率的に）
+    move_scores.sort(key=lambda x: x[1], reverse=True)
+    
+    # 上位30%からランダムに選択（完全に最善手だけでなく、多様性を持たせる）
+    top_count = max(1, len(move_scores) // 3)
+    best_move = random.choice(move_scores[:top_count])[0]  # タプルの最初の要素（Move）を取得
     
     return PredictResponse(
         move=best_move.to_dict(),

@@ -4,7 +4,7 @@
 
 // API URLを環境に応じて設定
 const API_BASE_URL = window.location.hostname === 'localhost' 
-    ? 'http://localhost:8000'
+    ? 'http://localhost:8000'  // ポートを8000に固定
     : window.location.origin;  // 本番環境では同じオリジンを使用
 
 // ゲーム状態
@@ -15,7 +15,11 @@ let gameState = {
     moveCount: 0,
     selectedPiece: null,
     selectedHandPiece: null,  // 選択された持ち駒
-    legalMoves: []
+    legalMoves: [],
+    gameMode: null,  // 'ai' or 'pvp'
+    playerColor: 'black',  // プレイヤーの色（AI対戦時）
+    aiDifficulty: 'medium',  // AI難易度
+    isAIThinking: false  // AI思考中フラグ
 };
 
 // 駒の表示名
@@ -41,15 +45,152 @@ const PIECE_NAMES = {
  */
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
-    startNewGame();
+    showMessage('新しいゲームを開始してください', 'info');
 });
 
 /**
  * イベントリスナーの設定
  */
 function setupEventListeners() {
-    document.getElementById('new-game-btn').addEventListener('click', startNewGame);
-    document.getElementById('ai-move-btn').addEventListener('click', requestAIMove);
+    document.getElementById('new-game-btn').addEventListener('click', showNewGameModal);
+    
+    // モーダル関連
+    document.getElementById('close-new-game-modal').addEventListener('click', closeNewGameModal);
+    
+    // ゲームモード選択
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            selectGameMode(this.dataset.mode);
+        });
+    });
+    
+    // ゲーム開始ボタン
+    document.getElementById('start-ai-game-btn').addEventListener('click', startAIGame);
+    document.getElementById('start-pvp-game-btn').addEventListener('click', startPvPGame);
+    
+    // ルールボタン
+    document.getElementById('rules-btn').addEventListener('click', showRulesModal);
+    document.getElementById('close-rules-modal').addEventListener('click', closeRulesModal);
+    
+    // タブ切り替え
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            switchTab(this.dataset.tab);
+        });
+    });
+    
+    // モーダル外クリックで閉じる
+    document.getElementById('new-game-modal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeNewGameModal();
+        }
+    });
+    
+    document.getElementById('rules-modal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeRulesModal();
+        }
+    });
+    
+    document.getElementById('piece-detail-modal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closePieceDetailModal();
+        }
+    });
+    
+    document.getElementById('practice-modal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closePracticeModal();
+        }
+    });
+    
+    // 駒詳細モーダル
+    document.getElementById('close-piece-detail').addEventListener('click', closePieceDetailModal);
+    
+    // 練習モーダル
+    document.getElementById('close-practice-modal').addEventListener('click', closePracticeModal);
+    
+    // 練習モードのレベル変更
+    document.getElementById('practice-level').addEventListener('change', function() {
+        updatePracticeBoard(currentPracticePiece, parseInt(this.value));
+    });
+}
+
+/**
+ * 新しいゲームモーダルを表示
+ */
+function showNewGameModal() {
+    const modal = document.getElementById('new-game-modal');
+    modal.style.display = 'flex';
+    modal.classList.add('show');
+    
+    // 設定をリセット
+    document.getElementById('ai-settings').style.display = 'none';
+    document.getElementById('pvp-settings').style.display = 'none';
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.remove('selected');
+    });
+}
+
+/**
+ * モーダルを閉じる
+ */
+function closeNewGameModal() {
+    const modal = document.getElementById('new-game-modal');
+    modal.style.display = 'none';
+    modal.classList.remove('show');
+}
+
+/**
+ * ゲームモードを選択
+ */
+function selectGameMode(mode) {
+    // ボタンの選択状態を更新
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.remove('selected');
+    });
+    event.target.closest('.mode-btn').classList.add('selected');
+    
+    // 設定画面を表示
+    document.getElementById('ai-settings').style.display = mode === 'ai' ? 'block' : 'none';
+    document.getElementById('pvp-settings').style.display = mode === 'pvp' ? 'block' : 'none';
+}
+
+/**
+ * AI対戦を開始
+ */
+async function startAIGame() {
+    const playerColor = document.querySelector('input[name="player-color"]:checked').value;
+    const aiDifficulty = document.querySelector('input[name="ai-difficulty"]:checked').value;
+    
+    gameState.gameMode = 'ai';
+    gameState.playerColor = playerColor;
+    gameState.aiDifficulty = aiDifficulty;
+    
+    closeNewGameModal();
+    await startNewGame();
+    
+    // ゲームモード表示を更新
+    const difficultyText = { easy: '初級', medium: '中級', hard: '上級' }[aiDifficulty];
+    document.getElementById('game-mode').textContent = `🤖 AI対戦（${difficultyText}）`;
+    
+    // プレイヤーが後手の場合、AIに先手を打たせる
+    if (playerColor === 'white') {
+        setTimeout(() => requestAIMove(), 1000);
+    }
+}
+
+/**
+ * 対人対戦を開始
+ */
+async function startPvPGame() {
+    gameState.gameMode = 'pvp';
+    
+    closeNewGameModal();
+    await startNewGame();
+    
+    // ゲームモード表示を更新
+    document.getElementById('game-mode').textContent = '👥 対人対戦';
 }
 
 /**
@@ -233,6 +374,18 @@ async function handleHandPieceClick(pieceType, player) {
         return;
     }
     
+    // AI対戦モードで、プレイヤーのターンでない場合は操作不可
+    if (gameState.gameMode === 'ai') {
+        const playerIsBlack = gameState.playerColor === 'black';
+        const currentPlayerIsBlack = gameState.currentPlayer === 'BLACK';
+        const isPlayerTurn = (playerIsBlack && currentPlayerIsBlack) || (!playerIsBlack && !currentPlayerIsBlack);
+        
+        if (!isPlayerTurn || gameState.isAIThinking) {
+            showMessage('AIのターンです', 'warning');
+            return;
+        }
+    }
+    
     // 既に同じ駒が選択されている場合は選択解除
     if (gameState.selectedHandPiece === pieceType) {
         gameState.selectedHandPiece = null;
@@ -308,6 +461,18 @@ async function handleCellClick(row, col) {
     if (!gameState.gameId) {
         showMessage('先にゲームを開始してください', 'warning');
         return;
+    }
+    
+    // AI対戦モードで、プレイヤーのターンでない場合は操作不可
+    if (gameState.gameMode === 'ai') {
+        const playerIsBlack = gameState.playerColor === 'black';
+        const currentPlayerIsBlack = gameState.currentPlayer === 'BLACK';
+        const isPlayerTurn = (playerIsBlack && currentPlayerIsBlack) || (!playerIsBlack && !currentPlayerIsBlack);
+        
+        if (!isPlayerTurn || gameState.isAIThinking) {
+            showMessage('AIのターンです', 'warning');
+            return;
+        }
     }
     
     // 持ち駒が選択されている場合は「新」を実行
@@ -564,6 +729,11 @@ async function attemptMove(fromRow, fromCol, toRow, toCol, moveType = 'NORMAL') 
             } else {
                 showMessage('手を適用しました', 'success');
             }
+            
+            // AI対戦モードで、かつゲームが終了していない場合、AIに自動で手を打たせる
+            if (gameState.gameMode === 'ai' && !data.game_state.game_over) {
+                await checkAndTriggerAIMove();
+            }
         } else {
             showMessage('無効な手です: ' + (data.message || ''), 'warning');
         }
@@ -613,6 +783,11 @@ async function attemptDrop(pieceType, toRow, toCol) {
             } else {
                 showMessage(`${PIECE_NAMES[pieceType]}を配置しました`, 'success');
             }
+            
+            // AI対戦モードで、かつゲームが終了していない場合、AIに自動で手を打たせる
+            if (gameState.gameMode === 'ai' && !data.game_state.game_over) {
+                await checkAndTriggerAIMove();
+            }
         } else {
             showMessage('無効な配置です: ' + (data.message || ''), 'warning');
         }
@@ -624,15 +799,40 @@ async function attemptDrop(pieceType, toRow, toCol) {
 }
 
 /**
+ * AIのターンかチェックして、必要ならAIに手を打たせる
+ */
+async function checkAndTriggerAIMove() {
+    if (gameState.isAIThinking) {
+        return; // 既にAIが考え中
+    }
+    
+    // プレイヤーの色とAIの色を判定
+    const playerIsBlack = gameState.playerColor === 'black';
+    const currentPlayerIsBlack = gameState.currentPlayer === 'BLACK';
+    
+    // AIのターンかチェック
+    const isAITurn = (playerIsBlack && !currentPlayerIsBlack) || (!playerIsBlack && currentPlayerIsBlack);
+    
+    if (isAITurn) {
+        // 少し待ってからAIに手を打たせる（自然な感じにするため）
+        setTimeout(() => requestAIMove(), 800);
+    }
+}
+
+/**
  * AIに手を打たせる
  */
 async function requestAIMove() {
     if (!gameState.gameId) {
-        showMessage('先にゲームを開始してください', 'warning');
         return;
     }
     
+    if (gameState.isAIThinking) {
+        return; // 既にAIが考え中
+    }
+    
     try {
+        gameState.isAIThinking = true;
         showMessage('AIが考えています...', 'info');
         
         const response = await fetch(`${API_BASE_URL}/predict/${gameState.gameId}`, {
@@ -650,14 +850,59 @@ async function requestAIMove() {
         const data = await response.json();
         const move = data.move;
         
+        console.log('AIの手:', move);
+        
         // AIの手を適用
+        // move_typeの正規化（NORMAL, CAPTURE, STACK, DROPのいずれか）
+        let moveType = move.move_type || move.type || 'NORMAL';
+        
+        const moveData = {
+            to_row: move.to[0],
+            to_col: move.to[1],
+            move_type: moveType
+        };
+        
+        // 移動元がある場合（DROP以外）
         if (move.from) {
-            await attemptMove(move.from[0], move.from[1], move.to[0], move.to[1]);
+            moveData.from_row = move.from[0];
+            moveData.from_col = move.from[1];
+        }
+        
+        // 駒の種類がある場合（DROP）
+        if (move.piece_type) {
+            moveData.piece_type = move.piece_type;
+        }
+        
+        console.log('適用する手:', moveData);
+        
+        const applyResponse = await fetch(`${API_BASE_URL}/apply_move/${gameState.gameId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(moveData)
+        });
+        
+        if (!applyResponse.ok) {
+            const errorData = await applyResponse.json();
+            throw new Error(`手の適用に失敗: ${errorData.detail || applyResponse.statusText}`);
+        }
+        
+        const applyData = await applyResponse.json();
+        
+        if (applyData.success) {
+            updateGameState(applyData.game_state);
+            showMessage('AIが手を打ちました', 'success');
+        } else {
+            console.error('AIの手の適用失敗:', applyData);
+            showMessage(`AIの手の適用に失敗: ${applyData.message || '不明なエラー'}`, 'error');
         }
         
     } catch (error) {
         console.error('Error requesting AI move:', error);
         showMessage('エラー: ' + error.message, 'error');
+    } finally {
+        gameState.isAIThinking = false;
     }
 }
 
@@ -673,4 +918,380 @@ function showMessage(message, type = 'info') {
     setTimeout(() => {
         messageElement.style.display = 'none';
     }, 3000);
+}
+
+// 駒のデータ（重要度順）
+const PIECES_DATA = {
+    SUI: { kanji: '帥', name: 'スイ', fullName: '帥（スイ）- 王将', count: 1, desc: '王将と同じ動き' },
+    HYO: { kanji: '兵', name: 'ヒョウ', fullName: '兵（ヒョウ）- 歩兵', count: 4, desc: '前後に1マス' },
+    SAMURAI: { kanji: '侍', name: 'サムライ', fullName: '侍（サムライ）', count: 2, desc: '前方に強い' },
+    SHO: { kanji: '小', name: 'ショウ', fullName: '小（ショウショウ）- 小将', count: 2, desc: '金将と同じ' },
+    UMA: { kanji: '馬', name: 'キバ', fullName: '馬（キバ）- 騎馬', count: 2, desc: '縦横に2マス' },
+    SHINOBI: { kanji: '忍', name: 'シノビ', fullName: '忍（シノビ）- 忍者', count: 2, desc: '斜めに2マス' },
+    YARI: { kanji: '槍', name: 'ヤリ', fullName: '槍（ヤリ）', count: 3, desc: '前方に2マス' },
+    BOU: { kanji: '謀', name: 'ボウ', fullName: '謀（ボウショウ）- 謀将', count: 1, desc: '斜め専用' },
+    DAI: { kanji: '大', name: 'タイショウ', fullName: '大（タイショウ）- 大将', count: 1, desc: '龍王と同じ' },
+    CHUU: { kanji: '中', name: 'チュウジョウ', fullName: '中（チュウジョウ）- 中将', count: 1, desc: '龍馬と同じ' },
+    TORIDE: { kanji: '砦', name: 'トリデ', fullName: '砦（トリデ）', count: 2, desc: '防御駒' },
+    YUMI: { kanji: '弓', name: 'ユミ', fullName: '弓（ユミ）', count: 2, desc: '飛び越え攻撃' },
+    TSUTU: { kanji: '筒', name: 'ツツ', fullName: '筒（ツツ）', count: 1, desc: 'ジャンプ移動' },
+    HOU: { kanji: '砲', name: 'オオヅツ', fullName: '砲（オオヅツ）', count: 1, desc: '前方ジャンプ' }
+};
+
+let currentPracticePiece = null;
+
+/**
+ * ルールモーダルを表示
+ */
+function showRulesModal() {
+    const modal = document.getElementById('rules-modal');
+    modal.style.display = 'flex';
+    modal.classList.add('show');
+    
+    // 駒グリッドを生成（初回のみ）
+    const piecesGrid = document.getElementById('pieces-grid');
+    if (piecesGrid.children.length === 0) {
+        generatePiecesGrid();
+    }
+}
+
+/**
+ * ルールモーダルを閉じる
+ */
+function closeRulesModal() {
+    const modal = document.getElementById('rules-modal');
+    modal.style.display = 'none';
+    modal.classList.remove('show');
+}
+
+/**
+ * タブを切り替え
+ */
+function switchTab(tabName) {
+    // タブボタンの状態を更新
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    
+    // タブコンテンツの表示を更新
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    document.getElementById(`tab-${tabName}`).classList.add('active');
+}
+
+/**
+ * 駒グリッドを生成
+ */
+function generatePiecesGrid() {
+    const piecesGrid = document.getElementById('pieces-grid');
+    
+    Object.keys(PIECES_DATA).forEach(pieceType => {
+        const data = PIECES_DATA[pieceType];
+        const card = document.createElement('div');
+        card.className = 'piece-card';
+        card.onclick = () => showPieceDetail(pieceType);
+        
+        card.innerHTML = `
+            <div class="piece-card-kanji">${data.kanji}</div>
+            <div class="piece-card-name">${data.name}</div>
+            <div class="piece-card-count">${data.count}枚</div>
+        `;
+        
+        piecesGrid.appendChild(card);
+    });
+}
+
+/**
+ * 駒の詳細を表示
+ */
+function showPieceDetail(pieceType) {
+    const data = PIECES_DATA[pieceType];
+    const modal = document.getElementById('piece-detail-modal');
+    const title = document.getElementById('piece-detail-title');
+    const body = document.getElementById('piece-detail-body');
+    
+    title.textContent = data.fullName;
+    
+    body.innerHTML = `
+        <div class="piece-info">
+            <div class="piece-info-item">
+                <span class="piece-info-label">枚数</span>
+                <span>${data.count}枚</span>
+            </div>
+            <div class="piece-info-item">
+                <span class="piece-info-label">説明</span>
+                <span>${data.desc}</span>
+            </div>
+        </div>
+        
+        <div class="piece-movements">
+            <div class="movement-level">
+                <h4>📐 1段目（基本）</h4>
+                ${generateMovementGrid(pieceType, 1)}
+            </div>
+            
+            <div class="movement-level">
+                <h4>📐 2段目（強化）</h4>
+                ${generateMovementGrid(pieceType, 2)}
+                <p style="color: #666; margin-top: 10px;">動ける範囲が広がります</p>
+            </div>
+            
+            <div class="movement-level">
+                <h4>📐 3段目（極）</h4>
+                ${generateMovementGrid(pieceType, 3)}
+                <p style="color: #666; margin-top: 10px;">最大範囲で動けます</p>
+            </div>
+        </div>
+        
+        ${getSpecialRules(pieceType)}
+        
+        <button class="btn btn-primary" onclick="showPracticeMode('${pieceType}')" style="width: 100%; margin-top: 20px;">
+            🎮 盤面で試す
+        </button>
+    `;
+    
+    modal.style.display = 'flex';
+    modal.classList.add('show');
+}
+
+/**
+ * 駒詳細モーダルを閉じる
+ */
+function closePieceDetailModal() {
+    const modal = document.getElementById('piece-detail-modal');
+    modal.style.display = 'none';
+    modal.classList.remove('show');
+}
+
+/**
+ * 移動グリッドを生成
+ */
+function generateMovementGrid(pieceType, level) {
+    const size = 7;
+    const center = 3;
+    const moves = getMovesForPiece(pieceType, level);
+    
+    let html = '<div class="movement-grid">';
+    for (let row = 0; row < size; row++) {
+        html += '<div class="movement-row">';
+        for (let col = 0; col < size; col++) {
+            // 座標系を修正: 表示上は上が敵陣（負の値）、下が自陣（正の値）
+            // drを反転させて、画面上部が前方（敵陣方向）になるようにする
+            const dr = center - row;  // 反転: 上が負、下が正
+            const dc = col - center;
+            let className = 'movement-cell';
+            
+            if (row === center && col === center) {
+                className += ' piece';
+                html += `<div class="${className}">${PIECES_DATA[pieceType].kanji}</div>`;
+            } else if (moves.some(m => m[0] === dr && m[1] === dc)) {
+                className += ' can-move';
+                html += `<div class="${className}">○</div>`;
+            } else {
+                html += `<div class="${className}"></div>`;
+            }
+        }
+        html += '</div>';
+    }
+    html += '</div>';
+    
+    return html;
+}
+
+/**
+ * 駒の動きを取得（piece.pyのPIECE_MOVE_PATTERNSと同期）
+ */
+function getMovesForPiece(pieceType, level) {
+    // piece.pyのデータ構造と完全に同期
+    const PIECE_MOVE_PATTERNS = {
+        'SUI': {  // 帥 - 8方向
+            1: [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]],
+            2: [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1],
+                [2, 2], [2, 0], [2, -2], [0, 2], [0, -2], [-2, 2], [-2, 0], [-2, -2]],
+            3: [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1],
+                [2, 2], [2, 0], [2, -2], [0, 2], [0, -2], [-2, 2], [-2, 0], [-2, -2],
+                [3, 3], [3, 0], [3, -3], [0, 3], [0, -3], [-3, 3], [-3, 0], [-3, -3]]
+        },
+        'DAI': {  // 大 - 斜め1マス＋長距離直線（龍王型）
+            1: [[1, 1], [1, -1], [-1, 1], [-1, -1]],
+            2: [[1, 1], [1, -1], [-1, 1], [-1, -1], [2, 2], [2, -2], [-2, 2], [-2, -2]],
+            3: [[1, 1], [1, -1], [-1, 1], [-1, -1], [2, 2], [2, -2], [-2, 2], [-2, -2],
+                [3, 3], [3, -3], [-3, 3], [-3, -3]]
+        },
+        'CHUU': {  // 中 - 直線1マス＋長距離斜め（龍馬型）
+            1: [[-1, 0], [0, 1], [0, -1], [1, 0]],
+            2: [[-1, 0], [0, 1], [0, -1], [1, 0], [2, 0], [0, 2], [0, -2], [-2, 0]],
+            3: [[-1, 0], [0, 1], [0, -1], [1, 0], [2, 0], [0, 2], [0, -2], [-2, 0],
+                [3, 0], [0, 3], [0, -3], [-3, 0]]
+        },
+        'SHO': {  // 小 - 金将
+            1: [[-1, 0], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]],
+            2: [[-1, 0], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1],
+                [-2, 0], [0, -2], [0, 2], [2, -2], [2, 0], [2, 2]],
+            3: [[-1, 0], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1],
+                [-2, 0], [0, -2], [0, 2], [2, -2], [2, 0], [2, 2],
+                [-3, 0], [0, -3], [0, 3], [3, -3], [3, 0], [3, 3]]
+        },
+        'SAMURAI': {  // 侍 - 前方と斜め前、後方
+            1: [[1, 1], [1, 0], [1, -1], [-1, 0]],
+            2: [[1, 1], [1, 0], [1, -1], [-1, 0], [2, 2], [2, 0], [2, -2], [-2, 0]],
+            3: [[1, 1], [1, 0], [1, -1], [-1, 0], [2, 2], [2, 0], [2, -2], [-2, 0],
+                [3, 3], [3, 0], [3, -3], [-3, 0]]
+        },
+        'HYO': {  // 兵 - 前後
+            1: [[1, 0], [-1, 0]],
+            2: [[1, 0], [-1, 0], [2, 0], [-2, 0]],
+            3: [[1, 0], [-1, 0], [2, 0], [-2, 0], [3, 0], [-3, 0]]
+        },
+        'UMA': {  // 馬 - 縦2マス＋横1マス
+            1: [[2, 0], [1, 0], [0, 1], [0, -1], [-1, 0], [-2, 0]],
+            2: [[2, 0], [1, 0], [0, 1], [0, -1], [-1, 0], [-2, 0],
+                [3, 0], [0, 2], [0, -2], [-3, 0]],
+            3: [[2, 0], [1, 0], [0, 1], [0, -1], [-1, 0], [-2, 0],
+                [3, 0], [0, 2], [0, -2], [-3, 0], [4, 0], [0, 3], [0, -3], [-4, 0]]
+        },
+        'SHINOBI': {  // 忍 - 斜め1-2マス
+            1: [[2, 2], [2, -2], [1, 1], [1, -1], [-1, 1], [-1, -1], [-2, 2], [-2, -2]],
+            2: [[2, 2], [2, -2], [1, 1], [1, -1], [-1, 1], [-1, -1], [-2, 2], [-2, -2],
+                [3, 3], [3, -3], [-3, 3], [-3, -3]],
+            3: [[2, 2], [2, -2], [1, 1], [1, -1], [-1, 1], [-1, -1], [-2, 2], [-2, -2],
+                [3, 3], [3, -3], [-3, 3], [-3, -3], [4, 4], [4, -4], [-4, 4], [-4, -4]]
+        },
+        'YARI': {  // 槍 - 前方2マス＋侍
+            1: [[2, 0], [1, 1], [1, 0], [1, -1], [-1, 0]],
+            2: [[2, 0], [1, 1], [1, 0], [1, -1], [-1, 0],
+                [3, 0], [2, 2], [2, -2], [-2, 0]],
+            3: [[2, 0], [1, 1], [1, 0], [1, -1], [-1, 0],
+                [3, 0], [2, 2], [2, -2], [-2, 0], [4, 0], [3, 3], [3, -3], [-3, 0]]
+        },
+        'TORIDE': {  // 砦 - 前方＋横＋後方斜め
+            1: [[1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1]],
+            2: [[1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1],
+                [2, 0], [0, 2], [0, -2], [-2, 2], [-2, -2]],
+            3: [[1, 0], [0, 1], [0, -1], [-1, 1], [-1, -1],
+                [2, 0], [0, 2], [0, -2], [-2, 2], [-2, -2],
+                [3, 0], [0, 3], [0, -3], [-3, 3], [-3, -3]]
+        },
+        'YUMI': {  // 弓 - 前方2マス＋後方1マス
+            1: [[2, -1], [2, 0], [2, 1], [-1, 0]],
+            2: [[2, -1], [2, 0], [2, 1], [-1, 0], [3, -2], [3, 0], [3, 2], [-2, 0]],
+            3: [[2, -1], [2, 0], [2, 1], [-1, 0], [3, -2], [3, 0], [3, 2], [-2, 0],
+                [4, -3], [4, 0], [4, 3], [-3, 0]]
+        },
+        'TSUTU': {  // 筒 - 前方2マス＋後方斜め
+            1: [[2, 0], [-1, 1], [-1, -1]],
+            2: [[2, 0], [-1, 1], [-1, -1], [3, 0], [-2, 2], [-2, -2]],
+            3: [[2, 0], [-1, 1], [-1, -1], [3, 0], [-2, 2], [-2, -2],
+                [4, 0], [-3, 3], [-3, -3]]
+        },
+        'HOU': {  // 砲 - 前方3マス＋横＋後方
+            1: [[3, 0], [0, 1], [0, -1], [-1, 0]],
+            2: [[3, 0], [0, 1], [0, -1], [-1, 0], [4, 0], [0, 2], [0, -2], [-2, 0]],
+            3: [[3, 0], [0, 1], [0, -1], [-1, 0], [4, 0], [0, 2], [0, -2], [-2, 0],
+                [5, 0], [0, 3], [0, -3], [-3, 0]]
+        },
+        'BOU': {  // 謀 - 前方斜め＋後方
+            1: [[1, 1], [1, -1], [-1, 0]],
+            2: [[1, 1], [1, -1], [-1, 0], [2, 2], [2, -2], [-2, 0]],
+            3: [[1, 1], [1, -1], [-1, 0], [2, 2], [2, -2], [-2, 0],
+                [3, 3], [3, -3], [-3, 0]]
+        }
+    };
+    
+    const pattern = PIECE_MOVE_PATTERNS[pieceType];
+    if (!pattern) {
+        return [];
+    }
+    
+    return pattern[level] || pattern[1];
+}
+
+/**
+ * 特殊ルールを取得
+ */
+function getSpecialRules(pieceType) {
+    let rules = '';
+    
+    if (pieceType === 'SUI') {
+        rules = `
+            <div class="special-rules">
+                <h4>⚠️ 特殊ルール</h4>
+                <ul>
+                    <li>帥の上に他の駒は乗せられない</li>
+                </ul>
+            </div>
+        `;
+    } else if (pieceType === 'TORIDE') {
+        rules = `
+            <div class="special-rules">
+                <h4>⚠️ 特殊ルール</h4>
+                <ul>
+                    <li>砦は他の駒の上に乗れない</li>
+                    <li>他の駒を砦の上に乗せることは可能</li>
+                </ul>
+            </div>
+        `;
+    }
+    
+    return rules;
+}
+
+/**
+ * 練習モードを表示
+ */
+function showPracticeMode(pieceType) {
+    currentPracticePiece = pieceType;
+    const modal = document.getElementById('practice-modal');
+    
+    // レベルを1にリセット
+    document.getElementById('practice-level').value = '1';
+    
+    updatePracticeBoard(pieceType, 1);
+    
+    modal.style.display = 'flex';
+    modal.classList.add('show');
+}
+
+/**
+ * 練習盤面を更新
+ */
+function updatePracticeBoard(pieceType, level) {
+    const board = document.getElementById('practice-board');
+    const size = 7;
+    const center = 3;
+    const moves = getMovesForPiece(pieceType, level);
+    
+    let html = '';
+    for (let row = 0; row < size; row++) {
+        html += '<div class="practice-row">';
+        for (let col = 0; col < size; col++) {
+            const dr = row - center;
+            const dc = col - center;
+            let className = 'practice-cell';
+            
+            if (row === center && col === center) {
+                className += ' piece';
+                html += `<div class="${className}">${PIECES_DATA[pieceType].kanji}</div>`;
+            } else if (moves.some(m => m[0] === dr && m[1] === dc)) {
+                className += ' can-move';
+                html += `<div class="${className}"></div>`;
+            } else {
+                html += `<div class="${className}"></div>`;
+            }
+        }
+        html += '</div>';
+    }
+    
+    board.innerHTML = html;
+}
+
+/**
+ * 練習モーダルを閉じる
+ */
+function closePracticeModal() {
+    const modal = document.getElementById('practice-modal');
+    modal.style.display = 'none';
+    modal.classList.remove('show');
 }

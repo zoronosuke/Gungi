@@ -15,9 +15,9 @@
 
         <div class="game-controls">
             <button id="new-game-btn" class="btn btn-primary">新しいゲーム</button>
-            <button id="ai-move-btn" class="btn btn-secondary">AIに手を打たせる</button>
-            <a href="drop_guide.html" class="btn btn-info" style="text-decoration: none;">「新」の使い方</a>
+            <button id="rules-btn" class="btn btn-info">ルール</button>
             <div class="game-info">
+                <span id="game-mode"></span>
                 <span id="current-player">先手（黒）の番</span>
                 <span id="move-count">手数: 0</span>
             </div>
@@ -49,6 +49,309 @@
         <div class="status-message" id="status-message"></div>
     </div>
 
-    <script src="game.js?v=3"></script>
+    <!-- ルールモーダル -->
+    <div id="rules-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2>軍儀ルールガイド</h2>
+                <span class="close-btn" id="close-rules-modal">&times;</span>
+            </div>
+            <div class="modal-tabs">
+                <button class="tab-btn active" data-tab="basic">基本ルール</button>
+                <button class="tab-btn" data-tab="pieces">駒の動き</button>
+                <button class="tab-btn" data-tab="stack">ツケ</button>
+                <button class="tab-btn" data-tab="drop">新</button>
+                <button class="tab-btn" data-tab="capture">取り方</button>
+            </div>
+            <div class="modal-body">
+                <!-- 基本ルールタブ -->
+                <div id="tab-basic" class="tab-content active">
+                    <h3>📘 基本ルール</h3>
+                    
+                    <div class="rule-section">
+                        <h4>ゲームの目的</h4>
+                        <p>相手の「帥（スイ）」を詰ませる</p>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>盤面</h4>
+                        <ul>
+                            <li>9×9マス（81マス）</li>
+                            <li>自陣（自分側3段）、中立地帯（中央3段）、敵陣（相手側3段）</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>勝利条件</h4>
+                        <ul>
+                            <li>相手の帥を捕獲する</li>
+                            <li>相手が投了する</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>ターンの進め方</h4>
+                        <ol>
+                            <li>駒を動かす、または</li>
+                            <li>持ち駒を配置する（「新」）</li>
+                            <li>手番を交代</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <!-- 駒の動きタブ -->
+                <div id="tab-pieces" class="tab-content">
+                    <h3>♟️ 駒の動き</h3>
+                    <p class="tab-desc">駒をクリックすると詳細が表示されます</p>
+                    
+                    <div class="pieces-grid" id="pieces-grid">
+                        <!-- JavaScriptで動的に生成 -->
+                    </div>
+                </div>
+
+                <!-- ツケタブ -->
+                <div id="tab-stack" class="tab-content">
+                    <h3>🏗️ ツケ（スタック）のルール</h3>
+                    
+                    <div class="rule-section">
+                        <h4>ツケとは</h4>
+                        <p>駒を他の駒の上に重ねること</p>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>基本ルール</h4>
+                        <ul class="check-list">
+                            <li>✅ 最大3段まで重ねられる</li>
+                            <li>✅ 味方の駒にもツケられる</li>
+                            <li>✅ 敵の駒にもツケられる</li>
+                            <li>✅ ツケると駒が強化される（動ける範囲が広がる）</li>
+                            <li>✅ 「新」で直接ツケることも可能</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>攻撃方法</h4>
+                        <div class="attack-types">
+                            <div class="attack-type">
+                                <strong>📍 動攻撃</strong>
+                                <p>駒を動かして攻撃</p>
+                                <p class="sub">└ タワーの最上段のみ攻撃可能</p>
+                            </div>
+                            <div class="attack-type">
+                                <strong>📍 不動攻撃</strong>
+                                <p>タワー内で上下の駒を攻撃</p>
+                                <p class="sub">└ 自分の直上・直下の駒のみ攻撃可能</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>制限事項</h4>
+                        <ul class="x-list">
+                            <li>❌ 帥の上には他の駒を乗せられない</li>
+                            <li>❌ 砦は他の駒の上に乗れない</li>
+                            <li>❌ 同じ種類の駒は同じタワーに入れない</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>図解</h4>
+                        <div class="stack-visual">
+                            <div class="tower-example">
+                                <div class="tower-piece level-3">兵</div>
+                                <div class="tower-piece level-2">馬</div>
+                                <div class="tower-piece level-1">侍</div>
+                                <div class="tower-label">最上段の駒だけが動ける</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 新タブ -->
+                <div id="tab-drop" class="tab-content">
+                    <h3>🎯 「新」の使い方</h3>
+                    
+                    <div class="rule-section">
+                        <h4>基本的な操作</h4>
+                        <ol class="step-list">
+                            <li>
+                                <strong>1️⃣ 持ち駒を選択</strong>
+                                <p>画面左右の持ち駒エリアから駒をクリック</p>
+                            </li>
+                            <li>
+                                <strong>2️⃣ 配置場所を選択</strong>
+                                <p>盤面の緑色に光った場所をクリック</p>
+                            </li>
+                        </ol>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>配置のルール</h4>
+                        <ul class="check-list">
+                            <li>✅ 自分の手番で持ち駒を配置できる</li>
+                            <li>✅ 空いているマスに配置</li>
+                            <li>✅ 他の駒の上に直接ツケることも可能</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>制限事項</h4>
+                        <ul class="x-list">
+                            <li>❌ 自軍の最前線より前には置けない<br>
+                            <span class="sub">（自分の駒がいる列より敵側には置けない）</span></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- 取り方タブ -->
+                <div id="tab-capture" class="tab-content">
+                    <h3>⚔️ 駒の取り方</h3>
+                    
+                    <div class="rule-section">
+                        <h4>駒を取る方法</h4>
+                        <p>自分の駒を動かして、敵駒のいるマスに進む</p>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>取った後</h4>
+                        <ul class="x-list">
+                            <li>❌ 持ち駒にはならない（将棋とは違う！）</li>
+                        </ul>
+                        <ul class="check-list">
+                            <li>✅ 盤外へ除去される</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>ツケて封じ込める</h4>
+                        <p>駒を取る代わりに、敵駒の上にツケることも可能</p>
+                        <ul>
+                            <li>└ 敵駒は封印され、動けなくなる</li>
+                            <li>└ 後で不動攻撃で取ることもできる</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="rule-section">
+                        <h4>タワーへの攻撃</h4>
+                        <ul>
+                            <li><strong>動攻撃：</strong>最上段の駒のみ取れる</li>
+                            <li><strong>不動攻撃：</strong>直上・直下の駒を取る</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 駒詳細ポップアップ -->
+    <div id="piece-detail-modal" class="modal">
+        <div class="modal-content modal-medium">
+            <div class="modal-header">
+                <h2 id="piece-detail-title"></h2>
+                <span class="close-btn" id="close-piece-detail">&times;</span>
+            </div>
+            <div class="modal-body" id="piece-detail-body">
+                <!-- JavaScriptで動的に生成 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 練習モードモーダル -->
+    <div id="practice-modal" class="modal">
+        <div class="modal-content modal-medium">
+            <div class="modal-header">
+                <h2>駒の動き練習</h2>
+                <span class="close-btn" id="close-practice-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="practice-controls">
+                    <label>段数: 
+                        <select id="practice-level">
+                            <option value="1">1段目（基本）</option>
+                            <option value="2">2段目（強化）</option>
+                            <option value="3">3段目（極）</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="practice-board" class="practice-board">
+                    <!-- JavaScriptで動的に生成 -->
+                </div>
+                <p class="practice-hint">青いマスが移動可能な場所です</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新しいゲーム選択モーダル -->
+    <div id="new-game-modal" class="modal">
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h2>新しいゲームを開始</h2>
+                <span class="close-btn" id="close-new-game-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <h3>対戦形式を選択</h3>
+                <div class="game-mode-selection">
+                    <button class="mode-btn" data-mode="ai">
+                        <div class="mode-icon">🤖</div>
+                        <div class="mode-title">AIと対戦</div>
+                        <div class="mode-desc">コンピュータと対戦します</div>
+                    </button>
+                    <button class="mode-btn" data-mode="pvp">
+                        <div class="mode-icon">👥</div>
+                        <div class="mode-title">対人対戦</div>
+                        <div class="mode-desc">2人で交互に操作します</div>
+                    </button>
+                </div>
+
+                <!-- AI対戦設定 -->
+                <div id="ai-settings" class="game-settings" style="display: none;">
+                    <h3>ゲーム設定</h3>
+                    
+                    <div class="setting-group">
+                        <label>あなたの手番</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="player-color" value="black" checked>
+                                <span>先手（黒）</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="player-color" value="white">
+                                <span>後手（白）</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>難易度</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="ai-difficulty" value="easy">
+                                <span>初級</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="ai-difficulty" value="medium" checked>
+                                <span>中級</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="ai-difficulty" value="hard">
+                                <span>上級</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <button id="start-ai-game-btn" class="btn btn-primary btn-large">ゲーム開始</button>
+                </div>
+
+                <!-- 対人対戦設定 -->
+                <div id="pvp-settings" class="game-settings" style="display: none;">
+                    <h3>ゲーム設定</h3>
+                    <p class="setting-desc">2人で交互に操作してプレイします</p>
+                    <button id="start-pvp-game-btn" class="btn btn-primary btn-large">ゲーム開始</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="game.js?v=5"></script>
 </body>
 </html>

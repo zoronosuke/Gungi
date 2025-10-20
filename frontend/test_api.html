@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #result {
+            background: #f0f0f0;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+        }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Gungi API Test</h1>
+    
+    <div>
+        <button onclick="testAPI()">Test API Connection</button>
+        <button onclick="testNewGame()">Test New Game</button>
+    </div>
+    
+    <div id="result"></div>
+    
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+        
+        function showResult(message, isError = false) {
+            const result = document.getElementById('result');
+            result.className = isError ? 'error' : 'success';
+            result.textContent = message;
+        }
+        
+        async function testAPI() {
+            try {
+                showResult('Testing API connection...');
+                const response = await fetch(`${API_BASE_URL}/api`);
+                const data = await response.json();
+                showResult('✅ API Connection Success!\n\n' + JSON.stringify(data, null, 2));
+            } catch (error) {
+                showResult('❌ API Connection Failed:\n\n' + error.message, true);
+            }
+        }
+        
+        async function testNewGame() {
+            try {
+                showResult('Creating new game...');
+                const response = await fetch(`${API_BASE_URL}/new_game`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                showResult('✅ New Game Created!\n\nGame ID: ' + data.game_id + '\n\n' + JSON.stringify(data, null, 2));
+            } catch (error) {
+                showResult('❌ New Game Failed:\n\n' + error.message, true);
+            }
+        }
+    </script>
+</body>
+</html>

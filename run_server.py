@@ -18,8 +18,8 @@ if __name__ == "__main__":
     print("=" * 60)
     print("軍儀 (Gungi) 開発サーバを起動します")
     print("=" * 60)
-    print("APIサーバ: http://localhost:8003")
-    print("API ドキュメント: http://localhost:8003/docs")
+    print("APIサーバ: http://localhost:8000")
+    print("API ドキュメント: http://localhost:8000/docs")
     print("=" * 60)
     print()
     
@@ -27,7 +27,7 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8003,
+        port=8000,  # ポートを8000に固定
         reload=False,  # Windowsでは問題が出やすいのでオフ
         log_level="info"
     )

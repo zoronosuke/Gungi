@@ -50,7 +50,8 @@ class Move:
     def to_dict(self) -> dict:
         """手を辞書形式に変換（API用）"""
         return {
-            "type": self.move_type.name,
+            "move_type": self.move_type.name,  # フロントエンドとの互換性のため
+            "type": self.move_type.name,       # 下位互換性のため
             "from": self.from_pos,
             "to": self.to_pos,
             "piece_type": self.piece_type.name if self.piece_type else None,
