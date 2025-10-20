@@ -212,6 +212,11 @@ async def apply_move(game_id: str, move_request: MoveRequest):
     )
     
     if not success:
+        # デバッグ用のログ
+        print(f"無効な手: {move}")
+        print(f"現在の持ち駒: {game_state.hand_pieces[game_state.current_player]}")
+        print(f"現在のプレイヤー: {game_state.current_player.name}")
+        
         return MoveResponse(
             success=False,
             message="無効な手です",
@@ -337,6 +342,19 @@ async def predict(game_id: str, request: PredictRequest):
     if not legal_moves:
         raise HTTPException(status_code=400, detail="合法手がありません")
     
+    # デバッグ情報
+    print(f"\n=== AI予測開始 ===")
+    print(f"プレイヤー: {game_state.current_player.name}")
+    print(f"持ち駒: {game_state.hand_pieces[game_state.current_player]}")
+    print(f"合法手の数: {len(legal_moves)}")
+    
+    # 手のタイプ別にカウント
+    move_type_counts = {}
+    for move in legal_moves:
+        move_type = move.move_type.name
+        move_type_counts[move_type] = move_type_counts.get(move_type, 0) + 1
+    print(f"手のタイプ別: {move_type_counts}")
+    
     # 簡易評価関数で手を選択
     import random
     
@@ -383,9 +401,60 @@ async def predict(game_id: str, request: PredictRequest):
     # スコアでソートして上位から選択（確率的に）
     move_scores.sort(key=lambda x: x[1], reverse=True)
     
-    # 上位30%からランダムに選択（完全に最善手だけでなく、多様性を持たせる）
-    top_count = max(1, len(move_scores) // 3)
-    best_move = random.choice(move_scores[:top_count])[0]  # タプルの最初の要素（Move）を取得
+    # まず、実際に適用可能な手だけをフィルタリング
+    valid_moves = []
+    for move, score in move_scores:
+        is_valid = True
+        
+        # DROPの場合、持ち駒があるか確認
+        if move.move_type == MoveType.DROP:
+            if (move.piece_type not in game_state.hand_pieces[game_state.current_player] or
+                game_state.hand_pieces[game_state.current_player][move.piece_type] <= 0):
+                is_valid = False
+        
+        # 移動元の駒が存在するか確認（NORMAL, CAPTURE, STACKの場合）
+        elif move.from_pos is not None:
+            from_piece = game_state.board.get_top_piece(move.from_pos)
+            if not from_piece or from_piece.owner != game_state.current_player:
+                is_valid = False
+        
+        if is_valid:
+            valid_moves.append((move, score))
+    
+    # 有効な手がない場合（理論上ありえないはずだが安全のため）
+    if not valid_moves:
+        print(f"❌ 警告: 有効な手が見つかりませんでした!")
+        print(f"  合法手数: {len(legal_moves)}")
+        print(f"  持ち駒: {game_state.hand_pieces[game_state.current_player]}")
+        print(f"  最初の5手:")
+        for i, (move, score) in enumerate(move_scores[:5]):
+            print(f"    {i+1}. {move} (score: {score})")
+        
+        # 全ての手を試して、本当に適用可能な手を探す
+        for move, score in move_scores:
+            # Boardのコピーを作って試す
+            test_board = game_state.board.copy()
+            test_hand = game_state.hand_pieces[game_state.current_player].copy()
+            success, _ = Rules.apply_move(test_board, move, test_hand)
+            if success:
+                print(f"  → 適用可能な手を発見: {move}")
+                best_move = move
+                break
+        else:
+            # それでも見つからない場合はエラー
+            print(f"  → 適用可能な手が本当にありません！")
+            raise HTTPException(
+                status_code=500, 
+                detail="内部エラー: 適用可能な手が見つかりませんでした"
+            )
+    else:
+        # 有効な手の上位30%からランダムに選択
+        top_count = max(1, len(valid_moves) // 3)
+        best_move = random.choice(valid_moves[:top_count])[0]
+        print(f"✓ 選択した手: {best_move}")
+        print(f"  有効な手の数: {len(valid_moves)}/{len(legal_moves)}")
+    
+    print(f"=== AI予測終了 ===\n")
     
     return PredictResponse(
         move=best_move.to_dict(),

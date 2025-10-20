@@ -896,13 +896,36 @@ async function requestAIMove() {
         } else {
             console.error('AIの手の適用失敗:', applyData);
             showMessage(`AIの手の適用に失敗: ${applyData.message || '不明なエラー'}`, 'error');
+            
+            // 適用失敗の場合、もう一度AIに手を要求
+            console.log('再度AIに手を要求します...');
+            gameState.isAIThinking = false;
+            setTimeout(() => requestAIMove(), 1000);
+            return;
         }
         
     } catch (error) {
         console.error('Error requesting AI move:', error);
         showMessage('エラー: ' + error.message, 'error');
+        
+        // エラーの場合もリトライを試みる（最大3回まで）
+        if (!gameState.aiRetryCount) {
+            gameState.aiRetryCount = 0;
+        }
+        
+        if (gameState.aiRetryCount < 3) {
+            gameState.aiRetryCount++;
+            console.log(`AIの手の取得を再試行します (${gameState.aiRetryCount}/3)...`);
+            gameState.isAIThinking = false;
+            setTimeout(() => requestAIMove(), 1000);
+            return;
+        } else {
+            console.error('AIの手の取得に3回失敗しました');
+            gameState.aiRetryCount = 0;
+        }
     } finally {
         gameState.isAIThinking = false;
+        gameState.aiRetryCount = 0;  // 成功したらリセット
     }
 }
 

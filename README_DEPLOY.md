@@ -146,7 +146,7 @@ Building using Dockerfile...
 
 ======================================
 🎮 アプリケーションURL:
-https://gungi-game-xxxxx-an.a.run.app
+https://gungi-game-2urmfnxx4q-an.a.run.app
 ======================================
 ```
 

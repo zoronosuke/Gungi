@@ -4,7 +4,7 @@
 
 ## 🎮 デモ
 
-**オンラインでプレイ**: [https://gungi-game-57998005741.asia-northeast1.run.app](https://gungi-game-57998005741.asia-northeast1.run.app)
+**オンラインでプレイ**: [https://gungi-game-2urmfnxx4q-an.a.run.app](https://gungi-game-2urmfnxx4q-an.a.run.app)
 
 ブラウザで今すぐ軍儀をプレイできます！（GCP Cloud Run上でホスティング）
 
