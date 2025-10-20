@@ -4,7 +4,7 @@
 
 // API URLを環境に応じて設定
 const API_BASE_URL = window.location.hostname === 'localhost' 
-    ? 'http://localhost:8003'
+    ? 'http://localhost:8000'
     : window.location.origin;  // 本番環境では同じオリジンを使用
 
 // ゲーム状態
@@ -558,7 +558,12 @@ async function attemptMove(fromRow, fromCol, toRow, toCol, moveType = 'NORMAL') 
         
         if (data.success) {
             updateGameState(data.game_state);
-            showMessage('手を適用しました', 'success');
+            // サーバーから返されたメッセージを表示（勝利メッセージを含む）
+            if (data.message) {
+                showMessage(data.message, 'success');
+            } else {
+                showMessage('手を適用しました', 'success');
+            }
         } else {
             showMessage('無効な手です: ' + (data.message || ''), 'warning');
         }
@@ -602,7 +607,12 @@ async function attemptDrop(pieceType, toRow, toCol) {
         
         if (data.success) {
             updateGameState(data.game_state);
-            showMessage(`${PIECE_NAMES[pieceType]}を配置しました`, 'success');
+            // サーバーから返されたメッセージを表示（勝利メッセージを含む）
+            if (data.message) {
+                showMessage(data.message, 'success');
+            } else {
+                showMessage(`${PIECE_NAMES[pieceType]}を配置しました`, 'success');
+            }
         } else {
             showMessage('無効な配置です: ' + (data.message || ''), 'warning');
         }

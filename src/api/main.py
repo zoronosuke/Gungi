@@ -117,7 +117,7 @@ class PredictResponse(BaseModel):
 
 # エンドポイント
 
-@app.get("/")
+@app.get("/api")
 async def root():
     """APIルート"""
     return {
@@ -218,27 +218,49 @@ async def apply_move(game_id: str, move_request: MoveRequest):
             game_state=game_state.to_dict()
         )
     
-    # 取った駒を持ち駒に追加
-    if captured_piece:
-        # captured_pieceがリストの場合（スタックから取った場合）、最上位の駒を取得
-        if isinstance(captured_piece, list):
-            if len(captured_piece) > 0:
-                piece = captured_piece[-1]  # スタックの最上位
-                piece_type = piece.piece_type
-            else:
-                piece_type = None
-        else:
-            piece_type = captured_piece.piece_type
-        
-        if piece_type and piece_type in game_state.hand_pieces[game_state.current_player]:
-            game_state.hand_pieces[game_state.current_player][piece_type] += 1
-        elif piece_type:
-            game_state.hand_pieces[game_state.current_player][piece_type] = 1
-    
     # 履歴に追加
     game_state.move_history.append(move)
     
-    # ゲーム終了判定
+    # 駒を取った場合の処理
+    sui_captured = False
+    if captured_piece:
+        # captured_pieceがリストの場合（スタックから取った場合）
+        if isinstance(captured_piece, list):
+            # スタック内の全ての駒をチェック
+            for piece in captured_piece:
+                # 帥が取られたかチェック
+                if piece.piece_type == PieceType.SUI:
+                    sui_captured = True
+                    break
+                # 帥以外の駒は持ち駒に追加
+                piece_type = piece.piece_type
+                if piece_type in game_state.hand_pieces[game_state.current_player]:
+                    game_state.hand_pieces[game_state.current_player][piece_type] += 1
+                else:
+                    game_state.hand_pieces[game_state.current_player][piece_type] = 1
+        else:
+            # 単一の駒の場合
+            if captured_piece.piece_type == PieceType.SUI:
+                sui_captured = True
+            else:
+                piece_type = captured_piece.piece_type
+                if piece_type in game_state.hand_pieces[game_state.current_player]:
+                    game_state.hand_pieces[game_state.current_player][piece_type] += 1
+                else:
+                    game_state.hand_pieces[game_state.current_player][piece_type] = 1
+    
+    # ゲーム終了判定（帥が取られた場合は即座に終了）
+    if sui_captured:
+        game_state.game_over = True
+        game_state.winner = game_state.current_player
+        return MoveResponse(
+            success=True,
+            message=f"帥を取りました！{game_state.winner.name}の勝利です！",
+            game_state=game_state.to_dict(),
+            legal_moves=None
+        )
+    
+    # 詰みの判定
     is_over, winner = Rules.is_game_over(game_state.board)
     if is_over:
         game_state.game_over = True
@@ -361,22 +383,24 @@ async def delete_game(game_id: str):
     return {"message": "ゲームを削除しました"}
 
 
-# ルートパスでフロントエンドを提供
+# フロントエンド用の静的ファイル配信
 @app.get("/")
-async def serve_frontend():
-    """フロントエンドのindex.htmlを提供"""
+async def serve_index():
+    """ルートでindex.htmlを提供"""
     index_file = FRONTEND_DIR / "index.html"
     if index_file.exists():
         return FileResponse(index_file)
     return {"message": "軍儀 API サーバが稼働中です。/docs でAPIドキュメントを確認できます。"}
 
-
-# その他の静的ファイル（drop_guide.htmlなど）
-@app.get("/{filename}")
+@app.get("/{filename:path}")
 async def serve_static_files(filename: str):
-    """静的ファイルを提供"""
+    """その他の静的ファイルを提供"""
+    # APIエンドポイントと競合しないようにチェック
+    if filename.startswith("api/") or filename in ["docs", "redoc", "openapi.json"]:
+        raise HTTPException(status_code=404, detail="ファイルが見つかりません")
+    
     file_path = FRONTEND_DIR / filename
-    if file_path.exists() and file_path.suffix in [".html", ".css", ".js"]:
+    if file_path.exists() and file_path.is_file():
         return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="ファイルが見つかりません")
 
