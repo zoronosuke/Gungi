@@ -65,6 +65,8 @@ def parse_args():
                         help='チェックポイント保存先')
     parser.add_argument('--device', type=str, default=None,
                         help='使用デバイス（cuda/cpu）')
+    parser.add_argument('--workers', type=int, default=None,
+                        help='並列ワーカー数（デフォルト: CPUコア数の半分）')
     
     return parser.parse_args()
 
@@ -97,6 +99,14 @@ def get_config(args):
     config['checkpoint_dir'] = args.checkpoint_dir
     config['resume'] = args.resume
     
+    # 並列ワーカー数
+    if args.workers:
+        config['num_workers'] = args.workers
+    else:
+        import os
+        # CPUコア数の半分をデフォルトに（最低1、最大8）
+        config['num_workers'] = max(1, min(8, os.cpu_count() // 2))
+    
     # デバイス
     if args.device:
         config['device'] = args.device
@@ -121,6 +131,7 @@ def main():
     print(f"  MCTS simulations: {config['mcts_simulations']}")
     print(f"  Games per iteration: {config['games_per_iteration']}")
     print(f"  Total iterations: {config['num_iterations']}")
+    print(f"  Parallel workers: {config['num_workers']}")
     print(f"  Batch size: {config['batch_size']}")
     print(f"  Epochs per iteration: {config['epochs_per_iteration']}")
     print(f"  Learning rate: {config['learning_rate']}")
@@ -153,6 +164,7 @@ def main():
         device=config['device'],
         mcts_simulations=config['mcts_simulations'],
         games_per_iteration=config['games_per_iteration'],
+        num_workers=config['num_workers'],
         batch_size=config['batch_size'],
         epochs_per_iteration=config['epochs_per_iteration'],
         learning_rate=config['learning_rate'],

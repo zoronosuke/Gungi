@@ -211,6 +211,7 @@ class AlphaZeroTrainer:
         # 自己対戦設定
         games_per_iteration: int = 10,
         temperature_threshold: int = 20,
+        num_workers: int = 1,  # 並列ワーカー数
         # 学習設定
         batch_size: int = 256,
         epochs_per_iteration: int = 10,
@@ -232,6 +233,7 @@ class AlphaZeroTrainer:
         # 自己対戦設定
         self.games_per_iteration = games_per_iteration
         self.temperature_threshold = temperature_threshold
+        self.num_workers = num_workers  # 並列ワーカー数
         
         # 学習設定
         self.batch_size = batch_size
@@ -284,6 +286,7 @@ class AlphaZeroTrainer:
         print(f"Device: {self.device}")
         print(f"MCTS simulations: {self.mcts_simulations}")
         print(f"Games per iteration: {self.games_per_iteration}")
+        print(f"Parallel workers: {self.num_workers}")
         print(f"Total iterations: {num_iterations}")
         print(f"Starting from iteration: {start_iter}")
         print(f"{'='*60}\n")
@@ -307,7 +310,8 @@ class AlphaZeroTrainer:
             examples = self_play.generate_data(
                 num_games=self.games_per_iteration,
                 temperature_threshold=self.temperature_threshold,
-                verbose=True
+                verbose=True,
+                num_workers=self.num_workers
             )
             
             # 勝敗統計を更新
@@ -400,7 +404,7 @@ class AlphaZeroTrainer:
             return False
         
         # モデルを読み込み
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.network.load_state_dict(checkpoint['model_state_dict'])
         self.trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         

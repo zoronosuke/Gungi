@@ -62,6 +62,8 @@ class GungiNetwork(nn.Module):
         self.board_size = board_size
         self.num_actions = num_actions
         self.input_channels = input_channels
+        self.num_res_blocks = num_res_blocks
+        self.num_filters = num_filters
         
         # 入力層
         self.input_conv = nn.Conv2d(input_channels, num_filters, kernel_size=3, padding=1, bias=False)
