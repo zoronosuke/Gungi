@@ -70,3 +70,8 @@ Dockerfile
 # Server run scripts (already in container)
 run_server.py
 start_server.*
+# チェックポイント（量子化版のみ含める）
+checkpoints/*.pt
+checkpoints/*.npz
+checkpoints/*.json
+!checkpoints/model_quantized.pt

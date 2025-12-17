@@ -71,20 +71,26 @@ class GungiAI:
             self._load_latest_checkpoint()
     
     def _load_latest_checkpoint(self):
-        """最新のチェックポイントを自動で読み込む"""
+        """最新のチェックポイントを自動で読み込む（量子化版を優先）"""
         checkpoint_dir = Path(__file__).parent.parent.parent / 'checkpoints'
         
         if not checkpoint_dir.exists():
             print("Warning: No checkpoint directory found. Using random weights.")
             return
         
-        # latest.ptを探す
+        # 1. 量子化モデルを最優先で探す（CPU推論で高速）
+        quantized_path = checkpoint_dir / 'model_quantized.pt'
+        if quantized_path.exists():
+            self.load_checkpoint(str(quantized_path), quantized=True)
+            return
+        
+        # 2. latest.ptを探す
         latest_path = checkpoint_dir / 'latest.pt'
         if latest_path.exists():
             self.load_checkpoint(str(latest_path))
             return
         
-        # なければmodel_iter_*.ptから最新を探す
+        # 3. なければmodel_iter_*.ptから最新を探す
         checkpoints = list(checkpoint_dir.glob('model_iter_*.pt'))
         if checkpoints:
             # ファイル名からイテレーション番号を抽出してソート
@@ -94,10 +100,19 @@ class GungiAI:
         
         print("Warning: No checkpoint files found. Using random weights.")
     
-    def load_checkpoint(self, path: str):
+    def load_checkpoint(self, path: str, quantized: bool = False):
         """チェックポイントを読み込む"""
         try:
             checkpoint = torch.load(path, map_location=self.device)
+            
+            # 量子化モデルの場合は動的量子化を適用
+            if quantized or checkpoint.get('quantized', False):
+                print("Loading quantized model...")
+                self.network = torch.quantization.quantize_dynamic(
+                    self.network,
+                    {torch.nn.Linear},
+                    dtype=torch.qint8
+                )
             
             # モデルの重みを読み込み
             if 'model_state_dict' in checkpoint:
@@ -113,6 +128,8 @@ class GungiAI:
                 print(f"Loaded checkpoint: iteration {checkpoint['iteration']}")
             if 'total_games' in checkpoint:
                 print(f"Total games trained: {checkpoint['total_games']}")
+            if checkpoint.get('quantized'):
+                print("Model type: Quantized (INT8)")
             
             print(f"Model loaded from: {path}")
             
