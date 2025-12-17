@@ -4,9 +4,40 @@ AlphaZero型の探索アルゴリズム
 """
 
 import math
+import copy
 import numpy as np
+import torch
 from typing import Optional, List, Dict, Tuple
-from ..engine import Board, Player, Move, Rules
+from dataclasses import dataclass
+
+from ..engine.board import Board
+from ..engine.piece import Player, PieceType
+from ..engine.move import Move
+from ..engine.rules import Rules
+from .encoder import StateEncoder, ActionEncoder
+
+
+@dataclass
+class GameState:
+    """ゲームの状態を保持するクラス"""
+    board: Board
+    player: Player
+    my_hand: Dict[PieceType, int]
+    opponent_hand: Dict[PieceType, int]
+    
+    def copy(self) -> 'GameState':
+        """ディープコピーを作成"""
+        return GameState(
+            board=self.board.copy(),
+            player=self.player,
+            my_hand=copy.deepcopy(self.my_hand),
+            opponent_hand=copy.deepcopy(self.opponent_hand)
+        )
+    
+    def switch_player(self):
+        """手番を交代（持ち駒も入れ替え）"""
+        self.player = self.player.opponent
+        self.my_hand, self.opponent_hand = self.opponent_hand, self.my_hand
 
 
 class MCTSNode:
@@ -14,108 +45,112 @@ class MCTSNode:
     
     def __init__(
         self,
-        board: Board,
-        player: Player,
+        state: GameState,
         parent: Optional['MCTSNode'] = None,
-        move: Optional[Move] = None,
-        prior_prob: float = 0.0
+        action: Optional[int] = None,  # 行動インデックス
+        prior: float = 0.0
     ):
-        self.board = board
-        self.player = player
+        self.state = state
         self.parent = parent
-        self.move = move  # このノードに至った手
-        self.prior_prob = prior_prob  # ニューラルネットが予測した事前確率
+        self.action = action
+        self.prior = prior
         
-        self.children: Dict[str, 'MCTSNode'] = {}  # 子ノード
-        self.visit_count = 0  # 訪問回数
-        self.total_value = 0.0  # 累積価値
-        self.mean_value = 0.0  # 平均価値
+        self.children: Dict[int, 'MCTSNode'] = {}  # action_idx -> child
+        self.visit_count: int = 0
+        self.value_sum: float = 0.0
     
-    def is_leaf(self) -> bool:
-        """葉ノードかどうか"""
-        return len(self.children) == 0
+    @property
+    def mean_value(self) -> float:
+        """平均価値"""
+        if self.visit_count == 0:
+            return 0.0
+        return self.value_sum / self.visit_count
     
-    def is_root(self) -> bool:
-        """ルートノードかどうか"""
-        return self.parent is None
-    
-    def expand(self, action_probs: Dict[Move, float]):
+    def ucb_score(self, c_puct: float = 1.5) -> float:
         """
-        ノードを展開（子ノードを作成）
+        PUCTスコアを計算
         
-        Args:
-            action_probs: 各手の事前確率
+        PUCT = Q + c_puct * P * sqrt(N_parent) / (1 + N)
         """
-        for move, prob in action_probs.items():
-            if str(move) not in self.children:
-                # 手を適用した新しい盤面を作成
-                new_board = self.board.copy()
-                Rules.apply_move(new_board, move)
-                
-                # 子ノードを作成
-                child = MCTSNode(
-                    board=new_board,
-                    player=self.player.opponent,
-                    parent=self,
-                    move=move,
-                    prior_prob=prob
-                )
-                self.children[str(move)] = child
+        if self.parent is None:
+            return 0.0
+        
+        # Q値（平均価値）- 親視点なので符号反転
+        q_value = -self.mean_value
+        
+        # U値（探索ボーナス）
+        u_value = c_puct * self.prior * math.sqrt(self.parent.visit_count) / (1 + self.visit_count)
+        
+        return q_value + u_value
     
-    def select_child(self, c_puct: float = 1.0) -> 'MCTSNode':
-        """
-        UCB1アルゴリズムで最良の子ノードを選択
-        
-        Args:
-            c_puct: 探索と活用のバランスパラメータ
-        
-        Returns:
-            選択された子ノード
-        """
+    def is_expanded(self) -> bool:
+        """展開済みかどうか"""
+        return len(self.children) > 0
+    
+    def select_child(self, c_puct: float = 1.5) -> 'MCTSNode':
+        """UCBスコアが最大の子ノードを選択"""
         best_score = -float('inf')
         best_child = None
         
         for child in self.children.values():
-            # UCB1スコアを計算
-            if child.visit_count == 0:
-                ucb_score = float('inf')
-            else:
-                # Q値（平均価値）
-                q_value = child.mean_value
-                
-                # U値（探索ボーナス）
-                u_value = c_puct * child.prior_prob * math.sqrt(self.visit_count) / (1 + child.visit_count)
-                
-                ucb_score = q_value + u_value
-            
-            if ucb_score > best_score:
-                best_score = ucb_score
+            score = child.ucb_score(c_puct)
+            if score > best_score:
+                best_score = score
                 best_child = child
         
         return best_child
     
-    def update(self, value: float):
+    def expand(self, policy: np.ndarray, legal_mask: np.ndarray,
+               action_encoder: ActionEncoder):
         """
-        ノードの統計情報を更新
+        ノードを展開
         
         Args:
-            value: バックアップする価値
+            policy: (7695,) 各行動の確率
+            legal_mask: (7695,) 合法手マスク
+            action_encoder: ActionEncoderインスタンス
         """
-        self.visit_count += 1
-        self.total_value += value
-        self.mean_value = self.total_value / self.visit_count
+        # 合法手のみを展開
+        legal_actions = np.where(legal_mask > 0)[0]
+        
+        for action_idx in legal_actions:
+            prior = policy[action_idx]
+            
+            # 手を適用した新しい状態を作成
+            new_state = self.state.copy()
+            move = action_encoder.decode_action(
+                action_idx, 
+                new_state.player,
+                new_state.board
+            )
+            
+            # 手を適用
+            success, captured = Rules.apply_move(
+                new_state.board, 
+                move, 
+                new_state.my_hand
+            )
+            
+            if success:
+                # 手番を交代
+                new_state.switch_player()
+                
+                # 子ノードを作成
+                child = MCTSNode(
+                    state=new_state,
+                    parent=self,
+                    action=action_idx,
+                    prior=prior
+                )
+                self.children[action_idx] = child
     
     def backpropagate(self, value: float):
-        """
-        価値をルートまでバックプロパゲート
-        
-        Args:
-            value: リーフノードでの評価値
-        """
+        """価値をルートまで逆伝播"""
         node = self
         while node is not None:
-            node.update(value)
-            value = -value  # 相手視点では符号反転
+            node.visit_count += 1
+            node.value_sum += value
+            value = -value  # 手番が変わるので符号反転
             node = node.parent
 
 
@@ -125,144 +160,217 @@ class MCTS:
     def __init__(
         self,
         network,
-        c_puct: float = 1.0,
-        num_simulations: int = 100,
-        device: str = 'cpu'
+        state_encoder: StateEncoder = None,
+        action_encoder: ActionEncoder = None,
+        c_puct: float = 1.5,
+        num_simulations: int = 50,
+        device: str = 'cuda'
     ):
         self.network = network
+        self.state_encoder = state_encoder or StateEncoder()
+        self.action_encoder = action_encoder or ActionEncoder()
         self.c_puct = c_puct
         self.num_simulations = num_simulations
         self.device = device
     
-    def search(self, board: Board, player: Player) -> Tuple[Move, Dict[Move, float]]:
+    def search(
+        self,
+        board: Board,
+        player: Player,
+        my_hand: Dict[PieceType, int],
+        opponent_hand: Dict[PieceType, int],
+        temperature: float = 1.0
+    ) -> Tuple[int, np.ndarray]:
         """
-        MCTSで最良の手を探索
+        MCTSで探索を行う
         
         Args:
             board: 現在の盤面
             player: 現在のプレイヤー
+            my_hand: 自分の持ち駒
+            opponent_hand: 相手の持ち駒
+            temperature: 行動選択の温度パラメータ
+                        1.0: 訪問回数に比例した確率で選択
+                        0.0(または0に近い値): 最も訪問回数が多い手を選択
         
         Returns:
-            (最良の手, 各手の訪問確率)
+            best_action: 選択された行動インデックス
+            action_probs: (7695,) 各行動の選択確率（学習データ用）
         """
-        root = MCTSNode(board=board, player=player)
+        # ルートノードを作成
+        root_state = GameState(
+            board=board.copy(),
+            player=player,
+            my_hand=copy.deepcopy(my_hand),
+            opponent_hand=copy.deepcopy(opponent_hand)
+        )
+        root = MCTSNode(state=root_state)
+        
+        # ルートノードを展開
+        value = self._evaluate_and_expand(root)
         
         # シミュレーションを実行
         for _ in range(self.num_simulations):
             node = root
             
             # 1. Selection: 葉ノードまで降下
-            while not node.is_leaf():
-                node = node.select_child(self.c_puct)
+            while node.is_expanded():
+                child = node.select_child(self.c_puct)
+                if child is None:
+                    break
+                node = child
             
-            # 2. Evaluation: ニューラルネットで評価
-            value, action_probs = self._evaluate(node.board, node.player)
+            # 2. ゲーム終了チェック
+            is_over, winner = Rules.is_game_over(node.state.board)
             
-            # ゲーム終了チェック
-            is_over, winner = Rules.is_game_over(node.board)
             if is_over:
-                # 終了局面の価値
-                if winner == player:
-                    value = 1.0
-                elif winner == player.opponent:
-                    value = -1.0
-                else:
+                # 終了局面の価値（現在のノードのプレイヤー視点）
+                if winner is None:
                     value = 0.0
+                elif winner == node.state.player:
+                    value = 1.0
+                else:
+                    value = -1.0
             else:
-                # 3. Expansion: ノードを展開
-                node.expand(action_probs)
+                # 3. Expansion & Evaluation
+                value = self._evaluate_and_expand(node)
             
-            # 4. Backpropagation: 価値を逆伝播
+            # 4. Backpropagation
             node.backpropagate(value)
         
-        # 最も訪問回数の多い手を選択
-        best_move = None
-        best_visits = -1
+        # 訪問回数から方策を計算
+        action_probs = np.zeros(self.action_encoder.ACTION_SIZE, dtype=np.float32)
         visit_counts = {}
         
-        for move_str, child in root.children.items():
-            visit_counts[child.move] = child.visit_count
-            if child.visit_count > best_visits:
-                best_visits = child.visit_count
-                best_move = child.move
+        for action_idx, child in root.children.items():
+            visit_counts[action_idx] = child.visit_count
+            action_probs[action_idx] = child.visit_count
         
-        # 訪問確率を計算
-        total_visits = sum(visit_counts.values())
-        visit_probs = {
-            move: count / total_visits
-            for move, count in visit_counts.items()
-        } if total_visits > 0 else {}
+        # 温度を適用
+        if temperature < 0.01:
+            # 温度が0に近い場合は最大訪問回数の手を選択
+            best_action = max(visit_counts.keys(), key=lambda a: visit_counts[a])
+            action_probs = np.zeros_like(action_probs)
+            action_probs[best_action] = 1.0
+        else:
+            # 温度を適用して確率分布を計算
+            if action_probs.sum() > 0:
+                action_probs = action_probs ** (1.0 / temperature)
+                action_probs = action_probs / action_probs.sum()
+            
+            # 確率に従って選択
+            if action_probs.sum() > 0:
+                best_action = np.random.choice(
+                    len(action_probs), 
+                    p=action_probs
+                )
+            else:
+                # 合法手がない（通常は起きない）
+                best_action = 0
         
-        return best_move, visit_probs
+        return best_action, action_probs
     
-    def _evaluate(self, board: Board, player: Player) -> Tuple[float, Dict[Move, float]]:
+    def _evaluate_and_expand(self, node: MCTSNode) -> float:
         """
-        ニューラルネットで盤面を評価
-        
-        Args:
-            board: 評価する盤面
-            player: 現在のプレイヤー
+        ノードをニューラルネットワークで評価し、展開する
         
         Returns:
-            (価値, 各手の事前確率)
+            value: 評価値（現在のプレイヤー視点）
         """
-        import torch
-        from .network import encode_board_state
-        
-        # 盤面をエンコード
-        state = encode_board_state(board, player).to(self.device)
-        
-        # ニューラルネットで予測
-        with torch.no_grad():
-            policy_logits, value = self.network(state)
-        
-        value = value.item()
-        policy_probs = torch.exp(policy_logits).cpu().numpy()[0]
+        state = node.state
         
         # 合法手を取得
-        legal_moves = Rules.get_legal_moves(board, player)
+        legal_moves = Rules.get_legal_moves(
+            state.board, 
+            state.player, 
+            state.my_hand
+        )
         
-        # 合法手のみに確率を割り当て
-        action_probs = {}
-        total_prob = 0.0
+        if not legal_moves:
+            # 合法手がない = 負け
+            return -1.0
         
-        for move in legal_moves:
-            # 手をアクションインデックスに変換（簡易版）
-            if move.from_pos and move.to_pos:
-                from_row, from_col = move.from_pos
-                to_row, to_col = move.to_pos
-                action_idx = (from_row * 9 + from_col) * 81 + to_row * 9 + to_col
-                
-                if action_idx < len(policy_probs):
-                    prob = policy_probs[action_idx]
-                else:
-                    prob = 1.0 / len(legal_moves)
-            else:
-                prob = 1.0 / len(legal_moves)
-            
-            action_probs[move] = prob
-            total_prob += prob
+        # 状態をエンコード
+        state_tensor = self.state_encoder.encode(
+            state.board,
+            state.player,
+            state.my_hand,
+            state.opponent_hand
+        )
+        state_tensor = torch.from_numpy(state_tensor).unsqueeze(0).to(self.device)
         
-        # 正規化
-        if total_prob > 0:
-            action_probs = {
-                move: prob / total_prob
-                for move, prob in action_probs.items()
-            }
+        # 合法手マスクを生成
+        legal_mask = self.action_encoder.get_legal_mask(
+            state.board,
+            state.player,
+            state.my_hand,
+            legal_moves
+        )
         
-        return value, action_probs
+        # ニューラルネットで評価
+        policy, value = self.network.predict(state_tensor, legal_mask)
+        
+        # ノードを展開
+        node.expand(policy, legal_mask, self.action_encoder)
+        
+        return value
+    
+    def get_best_move(
+        self,
+        board: Board,
+        player: Player,
+        my_hand: Dict[PieceType, int],
+        opponent_hand: Dict[PieceType, int]
+    ) -> Move:
+        """
+        最善手をMoveオブジェクトで返す（推論用）
+        """
+        action_idx, _ = self.search(
+            board, player, my_hand, opponent_hand,
+            temperature=0.1  # 推論時は低温度
+        )
+        
+        return self.action_encoder.decode_action(action_idx, player, board)
 
 
 if __name__ == "__main__":
     # テスト
-    from ..engine.initial_setup import load_initial_board
+    from ..engine.initial_setup import load_initial_board, get_initial_hand_pieces
     from .network import create_model
     
+    print("=== MCTS Test ===")
+    
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Device: {device}")
+    
+    # モデルを作成
+    model = create_model(device, test_mode=True)
+    
+    # MCTSを作成
+    mcts = MCTS(
+        network=model,
+        num_simulations=10,  # テスト用に少なく
+        device=device
+    )
+    
+    # 初期盤面を作成
     board = load_initial_board()
-    model = create_model('cpu')
+    player = Player.BLACK
+    my_hand = get_initial_hand_pieces(player)
+    opponent_hand = get_initial_hand_pieces(player.opponent)
     
-    mcts = MCTS(model, num_simulations=10)
-    best_move, visit_probs = mcts.search(board, Player.BLACK)
+    print(f"Initial legal moves: {len(Rules.get_legal_moves(board, player, my_hand))}")
     
-    print(f"Best move: {best_move}")
-    print(f"Visit probs: {len(visit_probs)}")
+    # 探索を実行
+    best_action, action_probs = mcts.search(
+        board, player, my_hand, opponent_hand,
+        temperature=1.0
+    )
+    
+    print(f"Best action index: {best_action}")
+    print(f"Action probs sum: {action_probs.sum():.4f}")
+    print(f"Non-zero probs: {np.sum(action_probs > 0)}")
+    
+    # Moveに変換
+    best_move = mcts.action_encoder.decode_action(best_action, player, board)
+    print(f"Best move: {best_move.move_type}, {best_move.from_pos} -> {best_move.to_pos}")

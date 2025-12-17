@@ -3,23 +3,31 @@
 AlphaZero型の方策+価値ネットワーク
 """
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple
+from typing import Tuple, Optional
 
 
 class ResidualBlock(nn.Module):
-    """ResNetの残差ブロック"""
+    """
+    ResNetの残差ブロック
     
-    def __init__(self, channels: int):
+    構造:
+    入力 ─┬─→ Conv3×3 → BN → ReLU → Conv3×3 → BN ─┬─→ ReLU → 出力
+          │                                        │
+          └────────────────────────────────────────┘
+    """
+    
+    def __init__(self, channels: int = 128):
         super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(channels)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(channels)
     
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
@@ -30,29 +38,33 @@ class ResidualBlock(nn.Module):
 
 class GungiNetwork(nn.Module):
     """
-    軍儀用のニューラルネットワーク
+    軍儀用のニューラルネットワーク（AlphaZero型）
     
-    入力: 盤面の状態 (C, 9, 9)
+    入力: 盤面の状態 (batch, 91, 9, 9)
     出力:
-        - policy: 各手の確率分布
-        - value: 局面の評価値 (-1 ~ 1)
+        - policy: 各手のlog確率分布 (batch, 7695)
+        - value: 局面の評価値 (batch, 1), -1〜1
+    
+    構造:
+        入力 → Conv → ResBlock×N → PolicyHead / ValueHead
     """
     
     def __init__(
         self,
-        input_channels: int = 64,  # 駒の種類 × プレイヤー × スタックレベル
-        num_res_blocks: int = 8,
-        num_filters: int = 128,
+        input_channels: int = 91,   # 状態エンコードのチャンネル数
+        num_res_blocks: int = 4,    # 15時間テスト用は4ブロック（本番は8）
+        num_filters: int = 128,     # フィルター数
         board_size: int = 9,
-        num_actions: int = 729  # 9x9 x 9 (from → to の組み合わせ)
+        num_actions: int = 7695     # 移動6561 + DROP1134
     ):
         super().__init__()
         
         self.board_size = board_size
         self.num_actions = num_actions
+        self.input_channels = input_channels
         
         # 入力層
-        self.input_conv = nn.Conv2d(input_channels, num_filters, kernel_size=3, padding=1)
+        self.input_conv = nn.Conv2d(input_channels, num_filters, kernel_size=3, padding=1, bias=False)
         self.input_bn = nn.BatchNorm2d(num_filters)
         
         # ResNetブロック
@@ -61,25 +73,27 @@ class GungiNetwork(nn.Module):
         ])
         
         # Policy Head（方策）
-        self.policy_conv = nn.Conv2d(num_filters, 32, kernel_size=1)
+        # Conv → BN → ReLU → Flatten → Linear → LogSoftmax
+        self.policy_conv = nn.Conv2d(num_filters, 32, kernel_size=1, bias=False)
         self.policy_bn = nn.BatchNorm2d(32)
         self.policy_fc = nn.Linear(32 * board_size * board_size, num_actions)
         
         # Value Head（価値）
-        self.value_conv = nn.Conv2d(num_filters, 8, kernel_size=1)
-        self.value_bn = nn.BatchNorm2d(8)
-        self.value_fc1 = nn.Linear(8 * board_size * board_size, 256)
-        self.value_fc2 = nn.Linear(256, 1)
+        # Conv → BN → ReLU → Flatten → Linear → ReLU → Linear → Tanh
+        self.value_conv = nn.Conv2d(num_filters, 4, kernel_size=1, bias=False)
+        self.value_bn = nn.BatchNorm2d(4)
+        self.value_fc1 = nn.Linear(4 * board_size * board_size, 128)
+        self.value_fc2 = nn.Linear(128, 1)
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         順伝播
         
         Args:
-            x: 盤面の状態テンソル (batch, channels, 9, 9)
+            x: 盤面の状態テンソル (batch, 91, 9, 9)
         
         Returns:
-            policy: 方策の確率分布 (batch, num_actions)
+            policy: 方策のlog確率分布 (batch, 7695)
             value: 価値の評価 (batch, 1)
         """
         # 入力層
@@ -102,87 +116,75 @@ class GungiNetwork(nn.Module):
         value = torch.tanh(self.value_fc2(value))
         
         return policy, value
+    
+    def predict(
+        self,
+        state: torch.Tensor,
+        legal_mask: np.ndarray
+    ) -> Tuple[np.ndarray, float]:
+        """
+        推論用メソッド（合法手マスク適用済み）
+        
+        Args:
+            state: (1, 91, 9, 9) 状態テンソル
+            legal_mask: (7695,) 合法手マスク
+        
+        Returns:
+            policy: (7695,) 合法手のみに確率を割り当て
+            value: float 評価値
+        """
+        self.eval()
+        with torch.no_grad():
+            log_policy, value = self.forward(state)
+            
+            # log確率を確率に変換
+            policy = torch.exp(log_policy).cpu().numpy()[0]
+            
+            # 合法手マスクを適用
+            policy = policy * legal_mask
+            
+            # 正規化
+            policy_sum = policy.sum()
+            if policy_sum > 0:
+                policy = policy / policy_sum
+            else:
+                # 合法手がない場合は均等分布（通常は起きない）
+                num_legal = legal_mask.sum()
+                if num_legal > 0:
+                    policy = legal_mask / num_legal
+            
+            return policy, value.item()
 
 
-def encode_board_state(board, player) -> torch.Tensor:
-    """
-    盤面の状態をニューラルネットワークの入力テンソルに変換
-    
-    Args:
-        board: Boardオブジェクト
-        player: 現在のプレイヤー
-    
-    Returns:
-        テンソル (1, channels, 9, 9)
-    """
-    # 各駒の種類 × プレイヤー × スタックレベルをチャンネルとして表現
-    # 例: 14種類 × 2プレイヤー × 3レベル = 84チャンネル
-    # 簡略化のため、ここでは基本的な実装のみ
-    
-    from ..engine import PieceType, Player, BOARD_SIZE
-    
-    num_piece_types = len(PieceType)
-    num_players = 2
-    max_stack = 3
-    channels = num_piece_types * num_players * max_stack + 1  # +1は手番情報
-    
-    state = torch.zeros(1, channels, BOARD_SIZE, BOARD_SIZE)
-    
-    channel_idx = 0
-    
-    # 各駒タイプ × プレイヤー × スタックレベルをエンコード
-    for piece_type in PieceType:
-        for owner in [Player.BLACK, Player.WHITE]:
-            for stack_level in range(max_stack):
-                for row in range(BOARD_SIZE):
-                    for col in range(BOARD_SIZE):
-                        stack = board.get_stack((row, col))
-                        if len(stack) > stack_level:
-                            piece = stack.get_piece_at_level(stack_level)
-                            if piece and piece.piece_type == piece_type and piece.owner == owner:
-                                state[0, channel_idx, row, col] = 1.0
-                channel_idx += 1
-    
-    # 手番情報（全マスに1または0）
-    if player == Player.BLACK:
-        state[0, channel_idx, :, :] = 1.0
-    
-    return state
-
-
-def decode_action(action_idx: int, board_size: int = 9) -> Tuple[int, int, int, int]:
-    """
-    アクションインデックスを (from_row, from_col, to_row, to_col) に変換
-    """
-    # 簡易的な実装: from位置とto位置の組み合わせ
-    from_pos = action_idx // (board_size * board_size)
-    to_idx = action_idx % (board_size * board_size)
-    
-    from_row = from_pos // board_size
-    from_col = from_pos % board_size
-    to_row = to_idx // board_size
-    to_col = to_idx % board_size
-    
-    return from_row, from_col, to_row, to_col
-
-
-def create_model(device: str = 'cpu') -> GungiNetwork:
+def create_model(device: str = 'cpu', test_mode: bool = True) -> GungiNetwork:
     """
     モデルを作成して初期化
     
     Args:
         device: 'cpu' or 'cuda'
+        test_mode: True=15時間テスト用（軽量）、False=本番用
     
     Returns:
         初期化されたGungiNetwork
     """
-    model = GungiNetwork(
-        input_channels=85,  # 14 types × 2 players × 3 levels + 1 turn
-        num_res_blocks=5,   # Phase 1は軽量版
-        num_filters=128,
-        board_size=9,
-        num_actions=729
-    )
+    if test_mode:
+        # 15時間テスト用: 軽量版
+        model = GungiNetwork(
+            input_channels=91,
+            num_res_blocks=4,
+            num_filters=128,
+            board_size=9,
+            num_actions=7695
+        )
+    else:
+        # 本番用
+        model = GungiNetwork(
+            input_channels=91,
+            num_res_blocks=8,
+            num_filters=128,
+            board_size=9,
+            num_actions=7695
+        )
     
     model = model.to(device)
     return model
@@ -190,12 +192,23 @@ def create_model(device: str = 'cpu') -> GungiNetwork:
 
 if __name__ == "__main__":
     # テスト
-    model = create_model('cpu')
+    print("=== GungiNetwork Test ===")
+    model = create_model('cpu', test_mode=True)
     
     # ダミー入力
-    dummy_input = torch.randn(1, 85, 9, 9)
+    dummy_input = torch.randn(1, 91, 9, 9)
     policy, value = model(dummy_input)
     
+    print(f"Input shape: {dummy_input.shape}")
     print(f"Policy shape: {policy.shape}")
     print(f"Value shape: {value.shape}")
-    print(f"Value: {value.item()}")
+    print(f"Value: {value.item():.4f}")
+    
+    # predictメソッドのテスト
+    legal_mask = np.zeros(7695, dtype=np.float32)
+    legal_mask[100:110] = 1.0  # ダミーの合法手
+    
+    policy_masked, value_scalar = model.predict(dummy_input, legal_mask)
+    print(f"\nPredicted policy sum: {policy_masked.sum():.4f}")
+    print(f"Predicted value: {value_scalar:.4f}")
+    print(f"Non-zero policy entries: {np.sum(policy_masked > 0)}")
