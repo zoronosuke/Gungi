@@ -66,7 +66,11 @@ def parse_args():
     parser.add_argument('--device', type=str, default=None,
                         help='使用デバイス（cuda/cpu）')
     parser.add_argument('--workers', type=int, default=None,
-                        help='並列ワーカー数（デフォルト: CPUコア数の半分）')
+                        help='並列ワーカー数（CPU並列版用）')
+    parser.add_argument('--parallel-games', type=int, default=16,
+                        help='並行ゲーム数（GPU版用、デフォルト16）')
+    parser.add_argument('--cpu-parallel', action='store_true',
+                        help='CPU並列版を使用（デフォルトはGPU最大効率版）')
     
     return parser.parse_args()
 
@@ -99,12 +103,17 @@ def get_config(args):
     config['checkpoint_dir'] = args.checkpoint_dir
     config['resume'] = args.resume
     
-    # 並列ワーカー数
+    # GPU版 or CPU並列版
+    config['use_gpu_selfplay'] = not args.cpu_parallel
+    
+    # 並行ゲーム数（GPU最大効率版用）
+    config['num_parallel_games'] = args.parallel_games
+    
+    # 並列ワーカー数（CPU並列版用）
     if args.workers:
         config['num_workers'] = args.workers
     else:
         import os
-        # CPUコア数の半分をデフォルトに（最低1、最大8）
         config['num_workers'] = max(1, min(8, os.cpu_count() // 2))
     
     # デバイス
@@ -126,12 +135,16 @@ def main():
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Mode: {'Full Training' if not config['test_mode'] else '15-Hour Test'}")
     print(f"Device: {config['device']}")
+    print(f"Self-play: {'Max-efficiency GPU' if config['use_gpu_selfplay'] else 'CPU parallel'}")
     print()
     print("Configuration:")
     print(f"  MCTS simulations: {config['mcts_simulations']}")
     print(f"  Games per iteration: {config['games_per_iteration']}")
     print(f"  Total iterations: {config['num_iterations']}")
-    print(f"  Parallel workers: {config['num_workers']}")
+    if config['use_gpu_selfplay']:
+        print(f"  Parallel games: {config['num_parallel_games']}")
+    else:
+        print(f"  Parallel workers: {config['num_workers']}")
     print(f"  Batch size: {config['batch_size']}")
     print(f"  Epochs per iteration: {config['epochs_per_iteration']}")
     print(f"  Learning rate: {config['learning_rate']}")
@@ -165,6 +178,8 @@ def main():
         mcts_simulations=config['mcts_simulations'],
         games_per_iteration=config['games_per_iteration'],
         num_workers=config['num_workers'],
+        use_gpu_selfplay=config['use_gpu_selfplay'],
+        num_parallel_games=config['num_parallel_games'],
         batch_size=config['batch_size'],
         epochs_per_iteration=config['epochs_per_iteration'],
         learning_rate=config['learning_rate'],

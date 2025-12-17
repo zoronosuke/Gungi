@@ -19,6 +19,8 @@ from datetime import datetime
 from .network import GungiNetwork, create_model
 from .encoder import StateEncoder, ActionEncoder
 from .self_play import SelfPlay, TrainingExample, ReplayBuffer
+from .gpu_self_play import GPUSelfPlay
+from .max_efficiency_selfplay import MaxEfficiencySelfPlay
 
 
 class GungiDataset(Dataset):
@@ -211,7 +213,9 @@ class AlphaZeroTrainer:
         # 自己対戦設定
         games_per_iteration: int = 10,
         temperature_threshold: int = 20,
-        num_workers: int = 1,  # 並列ワーカー数
+        num_workers: int = 1,  # CPU並列版用
+        use_gpu_selfplay: bool = True,  # GPU版自己対戦を使うか
+        num_parallel_games: int = 16,  # 最大効率版の並行ゲーム数
         # 学習設定
         batch_size: int = 256,
         epochs_per_iteration: int = 10,
@@ -234,6 +238,8 @@ class AlphaZeroTrainer:
         self.games_per_iteration = games_per_iteration
         self.temperature_threshold = temperature_threshold
         self.num_workers = num_workers  # 並列ワーカー数
+        self.use_gpu_selfplay = use_gpu_selfplay  # GPU版を使うか
+        self.num_parallel_games = num_parallel_games  # 並行ゲーム数
         
         # 学習設定
         self.batch_size = batch_size
@@ -284,9 +290,13 @@ class AlphaZeroTrainer:
         print(f"AlphaZero Training for Gungi")
         print(f"{'='*60}")
         print(f"Device: {self.device}")
+        print(f"Self-play mode: {'GPU-accelerated' if self.use_gpu_selfplay else 'CPU parallel'}")
         print(f"MCTS simulations: {self.mcts_simulations}")
         print(f"Games per iteration: {self.games_per_iteration}")
-        print(f"Parallel workers: {self.num_workers}")
+        if self.use_gpu_selfplay:
+            print(f"Parallel games: {self.num_parallel_games}")
+        else:
+            print(f"Parallel workers: {self.num_workers}")
         print(f"Total iterations: {num_iterations}")
         print(f"Starting from iteration: {start_iter}")
         print(f"{'='*60}\n")
@@ -298,24 +308,41 @@ class AlphaZeroTrainer:
             
             # 1. 自己対戦でデータ生成
             print("Generating self-play data...")
-            self_play = SelfPlay(
-                network=self.network,
-                state_encoder=self.state_encoder,
-                action_encoder=self.action_encoder,
-                mcts_simulations=self.mcts_simulations,
-                c_puct=self.c_puct,
-                device=self.device
-            )
             
-            examples = self_play.generate_data(
-                num_games=self.games_per_iteration,
-                temperature_threshold=self.temperature_threshold,
-                verbose=True,
-                num_workers=self.num_workers
-            )
-            
-            # 勝敗統計を更新
-            # （generate_dataの中で集計されるが、ここでは簡略化）
+            if self.use_gpu_selfplay:
+                # 最大効率版（GPU活用 + 並行ゲーム）
+                max_eff_self_play = MaxEfficiencySelfPlay(
+                    network=self.network,
+                    state_encoder=self.state_encoder,
+                    action_encoder=self.action_encoder,
+                    mcts_simulations=self.mcts_simulations,
+                    c_puct=self.c_puct,
+                    device=self.device,
+                    num_parallel_games=self.num_parallel_games
+                )
+                
+                examples = max_eff_self_play.generate_data(
+                    num_games=self.games_per_iteration,
+                    temperature_threshold=self.temperature_threshold,
+                    verbose=True
+                )
+            else:
+                # CPU並列版
+                self_play = SelfPlay(
+                    network=self.network,
+                    state_encoder=self.state_encoder,
+                    action_encoder=self.action_encoder,
+                    mcts_simulations=self.mcts_simulations,
+                    c_puct=self.c_puct,
+                    device=self.device
+                )
+                
+                examples = self_play.generate_data(
+                    num_games=self.games_per_iteration,
+                    temperature_threshold=self.temperature_threshold,
+                    verbose=True,
+                    num_workers=self.num_workers
+                )
             
             # 2. リプレイバッファに追加
             self.buffer.add(examples)
