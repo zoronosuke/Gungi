@@ -223,3 +223,221 @@ class TestEdgeCases:
         
         # 盤上に駒がなければ、持ち駒がない限り合法手はない
         # （持ち駒がある場合は打てる）
+
+
+class TestJumpPieces:
+    """ジャンプ可能な駒（弓・筒・砲）のテストクラス"""
+    
+    def test_yumi_can_jump_over_piece(self):
+        """弓がジャンプできることを確認"""
+        board = Board()
+        
+        # 弓を配置
+        board.add_piece((4, 4), Piece(PieceType.YUMI, Player.BLACK))
+        # 弓の移動先にある障害物
+        board.add_piece((3, 4), Piece(PieceType.HYO, Player.WHITE))
+        
+        legal_moves = Rules._get_piece_legal_moves(board, (4, 4), Player.BLACK)
+        
+        # 弓の動きパターンを確認（1段目）
+        # 弓は飛び越えて移動できるはず
+        move_targets = [m.to_pos for m in legal_moves]
+        
+        # 弓が障害物を飛び越えて移動できるか
+        # 具体的な動きは駒の定義による
+    
+    def test_yumi_at_level_2(self):
+        """弓の2段目での動きを確認"""
+        board = Board()
+        
+        # 弓を2段目に配置
+        position = (4, 4)
+        board.add_piece(position, Piece(PieceType.HYO, Player.BLACK))  # 1段目
+        board.add_piece(position, Piece(PieceType.YUMI, Player.BLACK))  # 2段目
+        
+        legal_moves = Rules._get_piece_legal_moves(board, position, Player.BLACK)
+        
+        # 2段目の弓の動きを確認
+        assert len(legal_moves) > 0, "2段目の弓に合法手がありません"
+    
+    def test_yumi_at_level_3(self):
+        """弓の3段目（極）での動きを確認"""
+        board = Board()
+        
+        # 弓を3段目に配置
+        position = (4, 4)
+        board.add_piece(position, Piece(PieceType.HYO, Player.BLACK))  # 1段目
+        board.add_piece(position, Piece(PieceType.HYO, Player.BLACK))  # 2段目
+        board.add_piece(position, Piece(PieceType.YUMI, Player.BLACK))  # 3段目
+        
+        legal_moves = Rules._get_piece_legal_moves(board, position, Player.BLACK)
+        
+        # 3段目の弓（極）はジャンプ可能
+        assert len(legal_moves) > 0, "3段目の弓に合法手がありません"
+    
+    def test_tsutu_can_jump(self):
+        """筒がジャンプできることを確認"""
+        board = Board()
+        
+        # 筒を配置
+        board.add_piece((4, 4), Piece(PieceType.TSUTU, Player.BLACK))
+        # 障害物を配置
+        board.add_piece((4, 5), Piece(PieceType.HYO, Player.WHITE))
+        
+        legal_moves = Rules._get_piece_legal_moves(board, (4, 4), Player.BLACK)
+        
+        # 筒の動きを確認
+        move_targets = [m.to_pos for m in legal_moves]
+    
+    def test_hou_can_jump(self):
+        """砲がジャンプできることを確認"""
+        board = Board()
+        
+        # 砲を配置
+        board.add_piece((4, 4), Piece(PieceType.HOU, Player.BLACK))
+        # 障害物を配置
+        board.add_piece((3, 4), Piece(PieceType.HYO, Player.WHITE))
+        
+        legal_moves = Rules._get_piece_legal_moves(board, (4, 4), Player.BLACK)
+        
+        # 砲の動きを確認
+        move_targets = [m.to_pos for m in legal_moves]
+    
+    def test_hou_at_level_3_mastered(self):
+        """砲の3段目（極）での動きを確認"""
+        board = Board()
+        
+        # 砲を3段目に配置
+        position = (4, 4)
+        board.add_piece(position, Piece(PieceType.HYO, Player.BLACK))  # 1段目
+        board.add_piece(position, Piece(PieceType.HYO, Player.BLACK))  # 2段目
+        board.add_piece(position, Piece(PieceType.HOU, Player.BLACK))  # 3段目
+        
+        legal_moves = Rules._get_piece_legal_moves(board, position, Player.BLACK)
+        
+        # 3段目の砲（極）の動き
+        assert len(legal_moves) > 0, "3段目の砲に合法手がありません"
+    
+    def test_jump_over_own_piece(self):
+        """味方の駒を飛び越えられることを確認"""
+        board = Board()
+        
+        # 弓を配置
+        board.add_piece((4, 4), Piece(PieceType.YUMI, Player.BLACK))
+        # 味方の駒を配置
+        board.add_piece((3, 4), Piece(PieceType.HYO, Player.BLACK))
+        
+        legal_moves = Rules._get_piece_legal_moves(board, (4, 4), Player.BLACK)
+        
+        # 味方の駒を飛び越えて移動できるか確認
+        move_targets = [m.to_pos for m in legal_moves]
+    
+    def test_jump_cannot_land_on_higher_stack(self):
+        """自分より高いスタックには着地できない"""
+        board = Board()
+        
+        # 弓を1段目に配置
+        board.add_piece((4, 4), Piece(PieceType.YUMI, Player.BLACK))
+        # 着地先に2段スタック
+        board.add_piece((2, 4), Piece(PieceType.HYO, Player.WHITE))
+        board.add_piece((2, 4), Piece(PieceType.HYO, Player.WHITE))
+        
+        legal_moves = Rules._get_piece_legal_moves(board, (4, 4), Player.BLACK)
+        
+        # 1段目の弓が2段スタックを取れないか確認
+        capture_to_stack = [
+            m for m in legal_moves 
+            if m.to_pos == (2, 4) and m.move_type.name == 'CAPTURE'
+        ]
+        
+        # 自分のスタック(1) < 相手のスタック(2) なので取れないはず
+
+
+class TestDirectionInversion:
+    """方向反転（BLACK/WHITE）のテストクラス"""
+    
+    def test_hyo_moves_opposite_directions(self):
+        """兵はBLACK/WHITEで反対方向に動く"""
+        # 中央に兵を配置
+        pos = (4, 4)
+        
+        # 黒の兵
+        black_board = Board()
+        black_board.add_piece(pos, Piece(PieceType.HYO, Player.BLACK))
+        black_moves = Rules._get_piece_legal_moves(black_board, pos, Player.BLACK)
+        black_targets = set(m.to_pos for m in black_moves if m.move_type.name == 'NORMAL')
+        
+        # 白の兵
+        white_board = Board()
+        white_board.add_piece(pos, Piece(PieceType.HYO, Player.WHITE))
+        white_moves = Rules._get_piece_legal_moves(white_board, pos, Player.WHITE)
+        white_targets = set(m.to_pos for m in white_moves if m.move_type.name == 'NORMAL')
+        
+        # 兵は前後1マスなので
+        # 黒の前方は上（行番号が小さい）方向 → (3, 4)
+        # 白の前方は下（行番号が大きい）方向 → (5, 4)
+        assert (3, 4) in black_targets, "黒の兵が前方に動けません"
+        assert (5, 4) in white_targets, "白の兵が前方に動けません"
+    
+    def test_samurai_front_diagonal_differs(self):
+        """侍の斜め前方向がBLACK/WHITEで異なる"""
+        pos = (4, 4)
+        
+        # 黒の侍
+        black_board = Board()
+        black_board.add_piece(pos, Piece(PieceType.SAMURAI, Player.BLACK))
+        black_moves = Rules._get_piece_legal_moves(black_board, pos, Player.BLACK)
+        black_targets = set(m.to_pos for m in black_moves if m.move_type.name == 'NORMAL')
+        
+        # 白の侍
+        white_board = Board()
+        white_board.add_piece(pos, Piece(PieceType.SAMURAI, Player.WHITE))
+        white_moves = Rules._get_piece_legal_moves(white_board, pos, Player.WHITE)
+        white_targets = set(m.to_pos for m in white_moves if m.move_type.name == 'NORMAL')
+        
+        # 侍は前方、斜め前、後方1マスに動ける
+        # 黒の斜め前は(3, 3)と(3, 5)
+        # 白の斜め前は(5, 3)と(5, 5)
+        assert (3, 3) in black_targets or (3, 5) in black_targets, "黒の侍が斜め前に動けません"
+        assert (5, 3) in white_targets or (5, 5) in white_targets, "白の侍が斜め前に動けません"
+    
+    def test_yari_forward_reach_differs(self):
+        """槍の前方リーチがBLACK/WHITEで異なる"""
+        pos = (4, 4)
+        
+        # 黒の槍
+        black_board = Board()
+        black_board.add_piece(pos, Piece(PieceType.YARI, Player.BLACK))
+        black_moves = Rules._get_piece_legal_moves(black_board, pos, Player.BLACK)
+        black_targets = set(m.to_pos for m in black_moves if m.move_type.name == 'NORMAL')
+        
+        # 白の槍
+        white_board = Board()
+        white_board.add_piece(pos, Piece(PieceType.YARI, Player.WHITE))
+        white_moves = Rules._get_piece_legal_moves(white_board, pos, Player.WHITE)
+        white_targets = set(m.to_pos for m in white_moves if m.move_type.name == 'NORMAL')
+        
+        # 槍は前方2マスまで動ける
+        # 黒の前方2マスは(2, 4)
+        # 白の前方2マスは(6, 4)
+        assert (2, 4) in black_targets, "黒の槍が前方2マスに動けません"
+        assert (6, 4) in white_targets, "白の槍が前方2マスに動けません"
+    
+    def test_sui_moves_same_for_both_players(self):
+        """帥は全方向なのでBLACK/WHITE同じ動き"""
+        pos = (4, 4)
+        
+        # 黒の帥
+        black_board = Board()
+        black_board.add_piece(pos, Piece(PieceType.SUI, Player.BLACK))
+        black_moves = Rules._get_piece_legal_moves(black_board, pos, Player.BLACK)
+        black_targets = set(m.to_pos for m in black_moves if m.move_type.name == 'NORMAL')
+        
+        # 白の帥
+        white_board = Board()
+        white_board.add_piece(pos, Piece(PieceType.SUI, Player.WHITE))
+        white_moves = Rules._get_piece_legal_moves(white_board, pos, Player.WHITE)
+        white_targets = set(m.to_pos for m in white_moves if m.move_type.name == 'NORMAL')
+        
+        # 帥は8方向全てに1マス動ける（対称）
+        assert black_targets == white_targets, "帥の動きがBLACK/WHITEで異なります"

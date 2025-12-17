@@ -90,9 +90,11 @@ class Rules:
                     # 1. 最大スタック高さ（3）未満
                     # 2. 帥の上には乗せられない
                     # 3. 自分のスタック高さ >= 相手のスタック高さ
+                    # 4. 砦は他の駒の上に乗れない
                     if (to_stack_height < 3 and 
                         target_piece.can_be_stacked_on() and
-                        from_stack_height >= to_stack_height):
+                        from_stack_height >= to_stack_height and
+                        piece.can_stack_on_other()):
                         move = Move.create_stack_move(from_pos, to_pos, player)
                         legal_moves.append(move)
             
@@ -108,9 +110,11 @@ class Rules:
                 # 1. 最大スタック高さ（3）未満
                 # 2. 帥の上には乗せられない
                 # 3. 自分のスタック高さ >= 相手のスタック高さ
+                # 4. 砦は他の駒の上に乗れない
                 if (to_stack_height < 3 and 
                     target_piece.can_be_stacked_on() and
-                    from_stack_height >= to_stack_height):
+                    from_stack_height >= to_stack_height and
+                    piece.can_stack_on_other()):
                     move = Move.create_stack_move(from_pos, to_pos, player)
                     legal_moves.append(move)
         
