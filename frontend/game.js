@@ -171,7 +171,7 @@ async function startAIGame() {
     await startNewGame();
     
     // ゲームモード表示を更新
-    const difficultyText = { easy: '初級', medium: '中級', hard: '上級' }[aiDifficulty];
+    const difficultyText = { easy: '初級', medium: '中級', hard: '上級', expert: '🔥最強' }[aiDifficulty];
     document.getElementById('game-mode').textContent = `🤖 AI対戦（${difficultyText}）`;
     
     // プレイヤーが後手の場合、AIに先手を打たせる
@@ -840,7 +840,10 @@ async function requestAIMove() {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ game_id: gameState.gameId, depth: 1 })
+            body: JSON.stringify({ 
+                game_id: gameState.gameId, 
+                difficulty: gameState.aiDifficulty || 'medium'
+            })
         });
         
         if (!response.ok) {

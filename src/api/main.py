@@ -322,8 +322,9 @@ async def get_legal_moves(game_id: str):
 async def predict(game_id: str, request: PredictRequest):
     """
     AIが次の手を予測する
-    現在は簡易的に評価関数付きランダム選択
-    将来的にはニューラルネット+MCTSで実装
+    ニューラルネットワーク + MCTSで手を選択
+    
+    difficulty: 'easy', 'medium', 'hard', 'expert'
     """
     if game_id not in games:
         raise HTTPException(status_code=404, detail="ゲームが見つかりません")
@@ -343,125 +344,79 @@ async def predict(game_id: str, request: PredictRequest):
     if not legal_moves:
         raise HTTPException(status_code=400, detail="合法手がありません")
     
-    # デバッグ情報
-    print(f"\n=== AI予測開始 ===")
+    difficulty = request.difficulty if hasattr(request, 'difficulty') else 'medium'
+    
+    print(f"\n=== AI予測開始 (難易度: {difficulty}) ===")
     print(f"プレイヤー: {game_state.current_player.name}")
-    print(f"持ち駒: {game_state.hand_pieces[game_state.current_player]}")
     print(f"合法手の数: {len(legal_moves)}")
     
-    # 手のタイプ別にカウント
-    move_type_counts = {}
-    for move in legal_moves:
-        move_type = move.move_type.name
-        move_type_counts[move_type] = move_type_counts.get(move_type, 0) + 1
-    print(f"手のタイプ別: {move_type_counts}")
-    
-    # 簡易評価関数で手を選択
-    import random
-    
-    # 手の優先度を評価
-    move_scores = []
-    for move in legal_moves:
-        score = 0
+    try:
+        # ニューラルネットワークAIを使用
+        from .ai_player import get_ai
+        ai = get_ai()
         
-        # CAPTURE（駒を取る手）を優先
-        if move.move_type == MoveType.CAPTURE:
-            score += 100
-            # 相手の帥を取る手は最優先
-            target_piece = game_state.board.get_top_piece(move.to_pos)
-            if target_piece and target_piece.piece_type == PieceType.SUI:
-                score += 1000
+        opponent = game_state.current_player.opponent
+        best_move, evaluation = ai.get_best_move(
+            board=game_state.board,
+            current_player=game_state.current_player,
+            hand_pieces=game_state.hand_pieces[game_state.current_player],
+            opponent_hand=game_state.hand_pieces[opponent],
+            difficulty=difficulty
+        )
         
-        # NORMAL（通常移動）
-        elif move.move_type == MoveType.NORMAL:
-            score += 10
-            # 前進する手を少し優先
-            if game_state.current_player == Player.BLACK:
-                score += max(0, move.from_pos[0] - move.to_pos[0])  # 上方向への移動
+        ai_info = {
+            "model_loaded": ai.model_loaded,
+            "difficulty": difficulty,
+            "device": ai.device
+        }
+        
+        print(f"✓ AI選択: {best_move}")
+        print(f"  評価値: {evaluation:.3f}")
+        print(f"=== AI予測終了 ===\n")
+        
+        return PredictResponse(
+            move=best_move.to_dict(),
+            evaluation=evaluation,
+            game_state=game_state.to_dict(),
+            ai_info=ai_info
+        )
+        
+    except Exception as e:
+        # フォールバック: シンプルな評価関数
+        print(f"⚠ AIエラー: {e}")
+        print("フォールバック: 簡易評価関数を使用")
+        
+        import random
+        
+        # 簡易評価
+        move_scores = []
+        for move in legal_moves:
+            score = 0
+            if move.move_type == MoveType.CAPTURE:
+                score += 100
+                target = game_state.board.get_top_piece(move.to_pos)
+                if target and target.piece_type == PieceType.SUI:
+                    score += 1000
+            elif move.move_type == MoveType.STACK:
+                score += 50
+            elif move.move_type == MoveType.DROP:
+                score += 30
             else:
-                score += max(0, move.to_pos[0] - move.from_pos[0])  # 下方向への移動
+                score += 10
+            score += random.random() * 5
+            move_scores.append((move, score))
         
-        # STACK（ツケ）
-        elif move.move_type == MoveType.STACK:
-            score += 50
+        move_scores.sort(key=lambda x: x[1], reverse=True)
+        best_move = move_scores[0][0]
         
-        # DROP（新）
-        elif move.move_type == MoveType.DROP:
-            score += 30
-            # 前線に近い位置への配置を優先
-            if game_state.current_player == Player.BLACK:
-                score += (8 - move.to_pos[0]) * 2  # 上方向が前線
-            else:
-                score += move.to_pos[0] * 2  # 下方向が前線
+        print(f"=== AI予測終了 (フォールバック) ===\n")
         
-        # ランダム要素を追加（同じスコアでもバリエーションを持たせる）
-        score += random.random() * 5
-        
-        move_scores.append((move, score))
-    
-    # スコアでソートして上位から選択（確率的に）
-    move_scores.sort(key=lambda x: x[1], reverse=True)
-    
-    # まず、実際に適用可能な手だけをフィルタリング
-    valid_moves = []
-    for move, score in move_scores:
-        is_valid = True
-        
-        # DROPの場合、持ち駒があるか確認
-        if move.move_type == MoveType.DROP:
-            if (move.piece_type not in game_state.hand_pieces[game_state.current_player] or
-                game_state.hand_pieces[game_state.current_player][move.piece_type] <= 0):
-                is_valid = False
-        
-        # 移動元の駒が存在するか確認（NORMAL, CAPTURE, STACKの場合）
-        elif move.from_pos is not None:
-            from_piece = game_state.board.get_top_piece(move.from_pos)
-            if not from_piece or from_piece.owner != game_state.current_player:
-                is_valid = False
-        
-        if is_valid:
-            valid_moves.append((move, score))
-    
-    # 有効な手がない場合（理論上ありえないはずだが安全のため）
-    if not valid_moves:
-        print(f"❌ 警告: 有効な手が見つかりませんでした!")
-        print(f"  合法手数: {len(legal_moves)}")
-        print(f"  持ち駒: {game_state.hand_pieces[game_state.current_player]}")
-        print(f"  最初の5手:")
-        for i, (move, score) in enumerate(move_scores[:5]):
-            print(f"    {i+1}. {move} (score: {score})")
-        
-        # 全ての手を試して、本当に適用可能な手を探す
-        for move, score in move_scores:
-            # Boardのコピーを作って試す
-            test_board = game_state.board.copy()
-            test_hand = game_state.hand_pieces[game_state.current_player].copy()
-            success, _ = Rules.apply_move(test_board, move, test_hand)
-            if success:
-                print(f"  → 適用可能な手を発見: {move}")
-                best_move = move
-                break
-        else:
-            # それでも見つからない場合はエラー
-            print(f"  → 適用可能な手が本当にありません！")
-            raise HTTPException(
-                status_code=500, 
-                detail="内部エラー: 適用可能な手が見つかりませんでした"
-            )
-    else:
-        # 有効な手の上位30%からランダムに選択
-        top_count = max(1, len(valid_moves) // 3)
-        best_move = random.choice(valid_moves[:top_count])[0]
-        print(f"✓ 選択した手: {best_move}")
-        print(f"  有効な手の数: {len(valid_moves)}/{len(legal_moves)}")
-    
-    print(f"=== AI予測終了 ===\n")
-    
-    return PredictResponse(
-        move=best_move.to_dict(),
-        evaluation=0.0,  # 将来: ニューラルネットの評価値
-        game_state=game_state.to_dict()
-    )
+        return PredictResponse(
+            move=best_move.to_dict(),
+            evaluation=0.0,
+            game_state=game_state.to_dict(),
+            ai_info={"fallback": True, "error": str(e)}
+        )
 
 
 @app.post("/resign/{game_id}")
@@ -497,6 +452,78 @@ async def delete_game(game_id: str):
     
     del games[game_id]
     return {"message": "ゲームを削除しました"}
+
+
+# AI管理エンドポイント
+
+@app.get("/ai/status")
+async def get_ai_status():
+    """AIの状態を取得"""
+    try:
+        from .ai_player import get_ai
+        ai = get_ai()
+        return {
+            "status": "loaded" if ai.model_loaded else "random",
+            "device": ai.device,
+            "model_loaded": ai.model_loaded,
+            "difficulty_levels": list(ai.DIFFICULTY_SETTINGS.keys())
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/ai/reload")
+async def reload_ai_model(checkpoint_path: Optional[str] = None):
+    """AIモデルを再読み込み（学習後に最新モデルを使う）"""
+    try:
+        from .ai_player import reload_ai
+        ai = reload_ai(checkpoint_path)
+        return {
+            "success": True,
+            "message": "AIモデルを再読み込みしました",
+            "model_loaded": ai.model_loaded,
+            "device": ai.device
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.get("/ai/evaluate/{game_id}")
+async def evaluate_position(game_id: str):
+    """現在の局面を評価"""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="ゲームが見つかりません")
+    
+    game_state = games[game_id]
+    
+    try:
+        from .ai_player import get_ai
+        ai = get_ai()
+        
+        opponent = game_state.current_player.opponent
+        evaluation = ai.evaluate_position(
+            board=game_state.board,
+            current_player=game_state.current_player,
+            hand_pieces=game_state.hand_pieces[game_state.current_player],
+            opponent_hand=game_state.hand_pieces[opponent]
+        )
+        
+        return {
+            "evaluation": evaluation,
+            "current_player": game_state.current_player.name,
+            "interpretation": "有利" if evaluation > 0.1 else "不利" if evaluation < -0.1 else "互角"
+        }
+    except Exception as e:
+        return {
+            "evaluation": 0.0,
+            "error": str(e)
+        }
 
 
 # フロントエンド用の静的ファイル配信
