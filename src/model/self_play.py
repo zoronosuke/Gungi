@@ -149,8 +149,12 @@ class TrainingExample:
 class SelfPlay:
     """自己対戦によるデータ生成"""
     
-    # 最大手数（千日手対策）
-    MAX_MOVES = 300
+    # 最大手数
+    MAX_MOVES = 200  # ゲームが長引くのは許容
+    
+    # 引き分けの評価値（千日手と最大手数到達で区別）
+    DRAW_VALUE_REPETITION = -0.9  # 千日手は強いペナルティ
+    DRAW_VALUE_MAX_MOVES = -0.1   # 最大手数到達は軽いペナルティ
     
     def __init__(
         self,
@@ -267,7 +271,7 @@ class SelfPlay:
         for state, policy, player in game_history:
             # 勝者に基づいて価値を決定
             if winner is None:
-                value = 0.0
+                value = self.DRAW_VALUE  # 引き分けは強いペナルティ
             elif winner == player:
                 value = 1.0
             else:

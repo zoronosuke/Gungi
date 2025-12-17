@@ -55,14 +55,16 @@ class MaxEfficiencySelfPlay:
     AlphaZero/将棋AIの手法を参考に改良
     """
     
-    MAX_MOVES = 300
+    MAX_MOVES = 200  # ゲームが長引くのは許容
+    REPETITION_THRESHOLD = 3  # 千日手判定を3回に（早めに検出）
     
     # Dirichletノイズのパラメータ（将棋AIと同様）
-    DIRICHLET_ALPHA = 0.3  # 将棋は0.15、囲碁は0.03、小さいほど集中
+    DIRICHLET_ALPHA = 0.15  # より小さく（将棋と同じ）
     DIRICHLET_EPSILON = 0.25  # ノイズの混合率
     
-    # 引き分けの評価値（少しペナルティを与える）
-    DRAW_VALUE = -0.1  # 0だと学習しにくい、少しマイナスに
+    # 引き分けの評価値（千日手と最大手数で区別）
+    DRAW_VALUE_REPETITION = -0.9  # 千日手は強いペナルティ（同じ手の繰り返しは悪い）
+    DRAW_VALUE_MAX_MOVES = -0.1   # 最大手数到達は軽いペナルティ（長いゲームは許容）
     
     def __init__(
         self,
@@ -226,8 +228,8 @@ class MaxEfficiencySelfPlay:
         position_key = self._get_position_hash(ctx)
         ctx.position_history[position_key] = ctx.position_history.get(position_key, 0) + 1
         
-        if ctx.position_history[position_key] >= 4:
-            # 同じ局面が4回出現したら千日手
+        if ctx.position_history[position_key] >= self.REPETITION_THRESHOLD:
+            # 同じ局面が閾値回出現したら千日手
             ctx.finished = True
             ctx.winner = None
             ctx.draw_reason = "REPETITION"
@@ -405,11 +407,14 @@ class MaxEfficiencySelfPlay:
                 active_games.remove(ctx)
                 completed_games += 1
                 
-                # 学習データを作成
+                # 学習データを作成（千日手と最大手数到達で異なるペナルティ）
                 for state, policy, player in ctx.history:
                     if ctx.winner is None:
-                        # 引き分けは少しマイナス評価（千日手を避けるよう学習）
-                        value = self.DRAW_VALUE
+                        # 引き分けの理由によってペナルティを変える
+                        if ctx.draw_reason == "REPETITION":
+                            value = self.DRAW_VALUE_REPETITION  # 千日手は強いペナルティ
+                        else:
+                            value = self.DRAW_VALUE_MAX_MOVES   # 最大手数は軽いペナルティ
                     elif ctx.winner == player:
                         value = 1.0
                     else:

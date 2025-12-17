@@ -82,7 +82,17 @@ def parse_args():
 def get_config(args):
     """引数から設定を構築"""
     
-    if args.optimized:
+    if args.full and args.optimized:
+        # 本番 + GPU最大効率設定（推奨）
+        config = {
+            'mcts_simulations': args.mcts_sims or 200,
+            'games_per_iteration': args.games or 50,
+            'num_iterations': args.iterations or 100,
+            'num_res_blocks': 8,  # 本番サイズ
+            'test_mode': False,
+            'use_optimized': True,  # GPU最大効率
+        }
+    elif args.optimized:
         # GPU最大効率設定（RTX 3060 Ti 8GB向け）
         config = {
             'mcts_simulations': args.mcts_sims or 100,

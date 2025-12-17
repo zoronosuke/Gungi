@@ -62,13 +62,15 @@ class OptimizedSelfPlay:
     5. Dirichletノイズで探索の多様性確保
     """
     
-    MAX_MOVES = 300
+    MAX_MOVES = 200  # ゲームが長引くのは許容
+    REPETITION_THRESHOLD = 3  # 千日手判定を3回に（早めに検出）
     
-    # 千日手ペナルティ（負けに近い扱い）
-    DRAW_PENALTY = -0.5
+    # 引き分けの評価値（千日手と最大手数で区別）
+    DRAW_VALUE_REPETITION = -0.9  # 千日手は強いペナルティ（同じ手の繰り返しは悪い）
+    DRAW_VALUE_MAX_MOVES = -0.1   # 最大手数到達は軽いペナルティ（長いゲームは許容）
     
     # Dirichletノイズ（AlphaZeroスタイル）
-    DIRICHLET_ALPHA = 0.3
+    DIRICHLET_ALPHA = 0.15  # より小さく（将棋と同じ）
     DIRICHLET_EPSILON = 0.25
     
     def __init__(
@@ -278,8 +280,8 @@ class OptimizedSelfPlay:
         position_key = self._get_position_hash(ctx)
         ctx.position_history[position_key] = ctx.position_history.get(position_key, 0) + 1
         
-        if ctx.position_history[position_key] >= 4:
-            # 同じ局面が4回出現したら千日手
+        if ctx.position_history[position_key] >= self.REPETITION_THRESHOLD:
+            # 同じ局面が閾値回出現したら千日手
             ctx.finished = True
             ctx.winner = None
             ctx.draw_reason = "REPETITION"
@@ -461,10 +463,14 @@ class OptimizedSelfPlay:
                 active_games.remove(ctx)
                 completed_games += 1
                 
-                # 学習データを作成（千日手は強いペナルティ）
+                # 学習データを作成（千日手と最大手数到達で異なるペナルティ）
                 for state, policy, player in ctx.history:
                     if ctx.winner is None:
-                        value = self.DRAW_PENALTY  # -0.5: 負けに近い扱い
+                        # 引き分けの理由によってペナルティを変える
+                        if ctx.draw_reason == "REPETITION":
+                            value = self.DRAW_VALUE_REPETITION  # 千日手は強いペナルティ
+                        else:
+                            value = self.DRAW_VALUE_MAX_MOVES   # 最大手数は軽いペナルティ
                     elif ctx.winner == player:
                         value = 1.0
                     else:
