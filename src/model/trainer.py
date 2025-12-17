@@ -21,6 +21,7 @@ from .encoder import StateEncoder, ActionEncoder
 from .self_play import SelfPlay, TrainingExample, ReplayBuffer
 from .gpu_self_play import GPUSelfPlay
 from .max_efficiency_selfplay import MaxEfficiencySelfPlay
+from .optimized_selfplay import OptimizedSelfPlay
 
 
 class GungiDataset(Dataset):
@@ -215,7 +216,9 @@ class AlphaZeroTrainer:
         temperature_threshold: int = 20,
         num_workers: int = 1,  # CPU並列版用
         use_gpu_selfplay: bool = True,  # GPU版自己対戦を使うか
+        use_optimized: bool = False,  # 最適化版を使うか
         num_parallel_games: int = 16,  # 最大効率版の並行ゲーム数
+        use_fp16: bool = True,  # 半精度を使うか
         # 学習設定
         batch_size: int = 256,
         epochs_per_iteration: int = 10,
@@ -239,7 +242,9 @@ class AlphaZeroTrainer:
         self.temperature_threshold = temperature_threshold
         self.num_workers = num_workers  # 並列ワーカー数
         self.use_gpu_selfplay = use_gpu_selfplay  # GPU版を使うか
+        self.use_optimized = use_optimized  # 最適化版を使うか
         self.num_parallel_games = num_parallel_games  # 並行ゲーム数
+        self.use_fp16 = use_fp16  # 半精度
         
         # 学習設定
         self.batch_size = batch_size
@@ -290,11 +295,18 @@ class AlphaZeroTrainer:
         print(f"AlphaZero Training for Gungi")
         print(f"{'='*60}")
         print(f"Device: {self.device}")
-        print(f"Self-play mode: {'GPU-accelerated' if self.use_gpu_selfplay else 'CPU parallel'}")
+        if self.use_optimized:
+            print(f"Self-play mode: OPTIMIZED (GPU max efficiency)")
+        elif self.use_gpu_selfplay:
+            print(f"Self-play mode: GPU-accelerated")
+        else:
+            print(f"Self-play mode: CPU parallel")
         print(f"MCTS simulations: {self.mcts_simulations}")
         print(f"Games per iteration: {self.games_per_iteration}")
-        if self.use_gpu_selfplay:
+        if self.use_gpu_selfplay or self.use_optimized:
             print(f"Parallel games: {self.num_parallel_games}")
+            if self.use_optimized:
+                print(f"FP16 (half precision): {self.use_fp16}")
         else:
             print(f"Parallel workers: {self.num_workers}")
         print(f"Total iterations: {num_iterations}")
@@ -309,7 +321,25 @@ class AlphaZeroTrainer:
             # 1. 自己対戦でデータ生成
             print("Generating self-play data...")
             
-            if self.use_gpu_selfplay:
+            if self.use_optimized:
+                # 最適化版（GPU最大効率 + FP16 + Virtual Loss）
+                optimized_self_play = OptimizedSelfPlay(
+                    network=self.network,
+                    state_encoder=self.state_encoder,
+                    action_encoder=self.action_encoder,
+                    mcts_simulations=self.mcts_simulations,
+                    c_puct=self.c_puct,
+                    device=self.device,
+                    num_parallel_games=self.num_parallel_games,
+                    use_fp16=self.use_fp16
+                )
+                
+                examples = optimized_self_play.generate_data(
+                    num_games=self.games_per_iteration,
+                    temperature_threshold=self.temperature_threshold,
+                    verbose=True
+                )
+            elif self.use_gpu_selfplay:
                 # 最大効率版（GPU活用 + 並行ゲーム）
                 max_eff_self_play = MaxEfficiencySelfPlay(
                     network=self.network,

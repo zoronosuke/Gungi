@@ -106,13 +106,14 @@ class MoveResponse(BaseModel):
 
 class PredictRequest(BaseModel):
     game_id: str
-    depth: int = 1  # MCTSの探索深さ（将来実装）
+    difficulty: str = 'medium'  # easy, medium, hard, expert
 
 
 class PredictResponse(BaseModel):
     move: dict
     evaluation: float
     game_state: dict
+    ai_info: Optional[dict] = None  # AIの情報
 
 
 # エンドポイント

@@ -39,22 +39,24 @@ def parse_args():
                         help='15時間テスト用の軽量設定（デフォルト）')
     parser.add_argument('--full', action='store_true',
                         help='本番用の設定')
+    parser.add_argument('--optimized', action='store_true',
+                        help='GPU最大効率モード（RTX 3060 Ti 8GB向け）')
     parser.add_argument('--resume', action='store_true',
                         help='前回の学習から再開')
     
     # MCTS設定
     parser.add_argument('--mcts-sims', type=int, default=None,
-                        help='MCTSシミュレーション数（デフォルト: test=50, full=200）')
+                        help='MCTSシミュレーション数（デフォルト: test=50, full=200, optimized=100）')
     
     # 自己対戦設定
     parser.add_argument('--games', type=int, default=None,
-                        help='イテレーションあたりのゲーム数（デフォルト: test=10, full=100）')
+                        help='イテレーションあたりのゲーム数（デフォルト: test=10, full=100, optimized=50）')
     parser.add_argument('--iterations', type=int, default=None,
-                        help='総イテレーション数（デフォルト: test=50, full=100）')
+                        help='総イテレーション数（デフォルト: test=50, full=100, optimized=200）')
     
     # 学習設定
-    parser.add_argument('--batch-size', type=int, default=256,
-                        help='バッチサイズ')
+    parser.add_argument('--batch-size', type=int, default=None,
+                        help='バッチサイズ（デフォルト: 256, optimized=512）')
     parser.add_argument('--epochs', type=int, default=10,
                         help='イテレーションあたりのエポック数')
     parser.add_argument('--lr', type=float, default=0.001,
@@ -67,10 +69,12 @@ def parse_args():
                         help='使用デバイス（cuda/cpu）')
     parser.add_argument('--workers', type=int, default=None,
                         help='並列ワーカー数（CPU並列版用）')
-    parser.add_argument('--parallel-games', type=int, default=16,
-                        help='並行ゲーム数（GPU版用、デフォルト16）')
+    parser.add_argument('--parallel-games', type=int, default=None,
+                        help='並行ゲーム数（GPU版用、デフォルト: 16, optimized=64）')
     parser.add_argument('--cpu-parallel', action='store_true',
                         help='CPU並列版を使用（デフォルトはGPU最大効率版）')
+    parser.add_argument('--use-fp16', action='store_true', default=True,
+                        help='半精度（FP16）を使用（デフォルト: True）')
     
     return parser.parse_args()
 
@@ -78,14 +82,25 @@ def parse_args():
 def get_config(args):
     """引数から設定を構築"""
     
-    if args.full:
+    if args.optimized:
+        # GPU最大効率設定（RTX 3060 Ti 8GB向け）
+        config = {
+            'mcts_simulations': args.mcts_sims or 100,
+            'games_per_iteration': args.games or 50,
+            'num_iterations': args.iterations or 200,
+            'num_res_blocks': 6,  # 中間的なサイズ
+            'test_mode': False,
+            'use_optimized': True,
+        }
+    elif args.full:
         # 本番設定
         config = {
             'mcts_simulations': args.mcts_sims or 200,
             'games_per_iteration': args.games or 100,
             'num_iterations': args.iterations or 100,
             'num_res_blocks': 8,
-            'test_mode': False
+            'test_mode': False,
+            'use_optimized': False,
         }
     else:
         # 15時間テスト設定
@@ -94,20 +109,33 @@ def get_config(args):
             'games_per_iteration': args.games or 10,
             'num_iterations': args.iterations or 50,
             'num_res_blocks': 4,
-            'test_mode': True
+            'test_mode': True,
+            'use_optimized': False,
         }
     
-    config['batch_size'] = args.batch_size
+    # バッチサイズ（optimizedの場合は大きく）
+    if args.batch_size:
+        config['batch_size'] = args.batch_size
+    elif args.optimized:
+        config['batch_size'] = 512
+    else:
+        config['batch_size'] = 256
     config['epochs_per_iteration'] = args.epochs
     config['learning_rate'] = args.lr
     config['checkpoint_dir'] = args.checkpoint_dir
     config['resume'] = args.resume
+    config['use_fp16'] = args.use_fp16
     
     # GPU版 or CPU並列版
     config['use_gpu_selfplay'] = not args.cpu_parallel
     
     # 並行ゲーム数（GPU最大効率版用）
-    config['num_parallel_games'] = args.parallel_games
+    if args.parallel_games:
+        config['num_parallel_games'] = args.parallel_games
+    elif args.optimized:
+        config['num_parallel_games'] = 64
+    else:
+        config['num_parallel_games'] = 16
     
     # 並列ワーカー数（CPU並列版用）
     if args.workers:
@@ -179,7 +207,9 @@ def main():
         games_per_iteration=config['games_per_iteration'],
         num_workers=config['num_workers'],
         use_gpu_selfplay=config['use_gpu_selfplay'],
+        use_optimized=config.get('use_optimized', False),
         num_parallel_games=config['num_parallel_games'],
+        use_fp16=config.get('use_fp16', True),
         batch_size=config['batch_size'],
         epochs_per_iteration=config['epochs_per_iteration'],
         learning_rate=config['learning_rate'],
