@@ -59,9 +59,17 @@ class OptimizedSelfPlay:
     2. Virtual Lossで並列MCTS
     3. TensorCoreを活用するため半精度（FP16）対応
     4. メモリ効率の良い状態管理
+    5. Dirichletノイズで探索の多様性確保
     """
     
     MAX_MOVES = 300
+    
+    # 千日手ペナルティ（負けに近い扱い）
+    DRAW_PENALTY = -0.5
+    
+    # Dirichletノイズ（AlphaZeroスタイル）
+    DIRICHLET_ALPHA = 0.3
+    DIRICHLET_EPSILON = 0.25
     
     def __init__(
         self,
@@ -168,7 +176,8 @@ class OptimizedSelfPlay:
         self, 
         ctx: GameContext, 
         policy: np.ndarray,
-        num_selections: int = 1
+        num_selections: int = 1,
+        add_noise: bool = False
     ) -> List[int]:
         """
         Virtual Lossを使用して複数のアクションを同時に選択
@@ -185,6 +194,14 @@ class OptimizedSelfPlay:
             masked_policy = masked_policy / total
         else:
             masked_policy = legal_mask / legal_mask.sum()
+        
+        # Dirichletノイズを追加（ルートノードのみ）
+        if add_noise and len(ctx.legal_actions) > 0:
+            noise = np.random.dirichlet([self.DIRICHLET_ALPHA] * len(ctx.legal_actions))
+            noise_full = np.zeros(7695)
+            for i, action_idx in enumerate(ctx.legal_actions):
+                noise_full[action_idx] = noise[i]
+            masked_policy = (1 - self.DIRICHLET_EPSILON) * masked_policy + self.DIRICHLET_EPSILON * noise_full
         
         selected_actions = []
         temp_visit_counts = defaultdict(int, ctx.mcts_visit_counts)
@@ -377,8 +394,10 @@ class OptimizedSelfPlay:
                     continue
                 
                 # Virtual Lossで複数アクションを選択
+                # 最初のシミュレーションではDirichletノイズを追加
+                add_noise = (ctx.mcts_simulation == 0)
                 selected_actions = self._select_action_puct_with_virtual_loss(
-                    ctx, ctx.cached_policy, batch_sims
+                    ctx, ctx.cached_policy, batch_sims, add_noise=add_noise
                 )
                 
                 for action in selected_actions:
@@ -442,11 +461,10 @@ class OptimizedSelfPlay:
                 active_games.remove(ctx)
                 completed_games += 1
                 
-                # 学習データを作成（引き分けはペナルティ）
-                draw_value = -0.1 if ctx.winner is None else 0.0
+                # 学習データを作成（千日手は強いペナルティ）
                 for state, policy, player in ctx.history:
                     if ctx.winner is None:
-                        value = draw_value
+                        value = self.DRAW_PENALTY  # -0.5: 負けに近い扱い
                     elif ctx.winner == player:
                         value = 1.0
                     else:
