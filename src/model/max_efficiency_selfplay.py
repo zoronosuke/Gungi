@@ -34,6 +34,10 @@ class GameContext:
     history: List[Tuple[np.ndarray, np.ndarray, Player]]
     finished: bool = False
     winner: Optional[Player] = None
+    draw_reason: Optional[str] = None  # 引き分けの理由
+    
+    # 千日手検出用
+    position_history: Dict[str, int] = field(default_factory=dict)
     
     # MCTS用の一時状態
     mcts_visit_counts: Dict[int, int] = field(default_factory=dict)
@@ -48,19 +52,28 @@ class MaxEfficiencySelfPlay:
     """
     最大効率版の自己対戦
     複数ゲームを並行して進行し、NN推論をバッチ処理
+    AlphaZero/将棋AIの手法を参考に改良
     """
     
     MAX_MOVES = 300
+    
+    # Dirichletノイズのパラメータ（将棋AIと同様）
+    DIRICHLET_ALPHA = 0.3  # 将棋は0.15、囲碁は0.03、小さいほど集中
+    DIRICHLET_EPSILON = 0.25  # ノイズの混合率
+    
+    # 引き分けの評価値（少しペナルティを与える）
+    DRAW_VALUE = -0.1  # 0だと学習しにくい、少しマイナスに
     
     def __init__(
         self,
         network,
         state_encoder: StateEncoder = None,
         action_encoder: ActionEncoder = None,
-        mcts_simulations: int = 50,
+        mcts_simulations: int = 100,  # 将棋AIは800、最低でも100推奨
         c_puct: float = 1.5,
         device: str = 'cuda',
-        num_parallel_games: int = 16  # 並行ゲーム数
+        num_parallel_games: int = 16,  # 並行ゲーム数
+        use_dirichlet_noise: bool = True  # 探索の多様性
     ):
         self.network = network
         self.state_encoder = state_encoder or StateEncoder()
@@ -69,6 +82,7 @@ class MaxEfficiencySelfPlay:
         self.c_puct = c_puct
         self.device = device
         self.num_parallel_games = num_parallel_games
+        self.use_dirichlet_noise = use_dirichlet_noise
         
         self.network.to(device)
         self.network.eval()
@@ -121,9 +135,10 @@ class MaxEfficiencySelfPlay:
     def _select_action_puct(
         self, 
         ctx: GameContext, 
-        policy: np.ndarray
+        policy: np.ndarray,
+        is_root: bool = False
     ) -> int:
-        """PUCTでアクションを選択"""
+        """PUCTでアクションを選択（AlphaZeroスタイル）"""
         # 合法手でマスク
         legal_mask = np.zeros(7695)
         for action_idx in ctx.legal_actions:
@@ -135,6 +150,15 @@ class MaxEfficiencySelfPlay:
             masked_policy = masked_policy / total
         else:
             masked_policy = legal_mask / legal_mask.sum()
+        
+        # ルートノードにDirichletノイズを追加（探索の多様性）
+        if is_root and self.use_dirichlet_noise and len(ctx.legal_actions) > 0:
+            noise = np.random.dirichlet([self.DIRICHLET_ALPHA] * len(ctx.legal_actions))
+            noise_full = np.zeros(7695)
+            for i, action_idx in enumerate(ctx.legal_actions):
+                noise_full[action_idx] = noise[i]
+            
+            masked_policy = (1 - self.DIRICHLET_EPSILON) * masked_policy + self.DIRICHLET_EPSILON * noise_full
         
         sqrt_total = np.sqrt(sum(ctx.mcts_visit_counts.values()) + 1)
         best_score = -float('inf')
@@ -188,6 +212,7 @@ class MaxEfficiencySelfPlay:
         if not success:
             ctx.finished = True
             ctx.winner = ctx.current_player.opponent
+            ctx.draw_reason = "MOVE_FAILED"
             return
         
         # ゲーム終了チェック
@@ -195,6 +220,17 @@ class MaxEfficiencySelfPlay:
         if is_over:
             ctx.finished = True
             ctx.winner = winner
+            return
+        
+        # 千日手チェック（盤面のハッシュを使用）
+        position_key = self._get_position_hash(ctx)
+        ctx.position_history[position_key] = ctx.position_history.get(position_key, 0) + 1
+        
+        if ctx.position_history[position_key] >= 4:
+            # 同じ局面が4回出現したら千日手
+            ctx.finished = True
+            ctx.winner = None
+            ctx.draw_reason = "REPETITION"
             return
         
         # 手番交代
@@ -205,6 +241,25 @@ class MaxEfficiencySelfPlay:
         if ctx.move_count >= self.MAX_MOVES:
             ctx.finished = True
             ctx.winner = None
+            ctx.draw_reason = "MAX_MOVES"
+    
+    def _get_position_hash(self, ctx: GameContext) -> str:
+        """局面のハッシュを生成（千日手検出用）"""
+        # 盤面の状態を文字列化
+        board_str = ""
+        for r in range(9):
+            for c in range(9):
+                stack = ctx.board.get_stack((r, c))
+                if stack.is_empty():
+                    board_str += "."
+                else:
+                    # スタック内の全駒を記録
+                    for piece in stack.pieces:
+                        board_str += f"{piece.piece_type.name[0]}{piece.owner.name[0]}"
+                    board_str += "|"
+        # 現在の手番も含める
+        board_str += ctx.current_player.name
+        return board_str
     
     def _reset_mcts_state(self, ctx: GameContext, temperature_threshold: int):
         """MCTSの状態をリセット"""
@@ -212,7 +267,18 @@ class MaxEfficiencySelfPlay:
         ctx.mcts_total_values = defaultdict(float)
         ctx.mcts_simulation = 0
         ctx.legal_actions = self._get_legal_actions(ctx)
-        ctx.temperature = 1.0 if ctx.move_count < temperature_threshold else 0.1
+        
+        # 温度スケジューリング（将棋AIスタイル）
+        # 序盤30手: 高温(1.0) - 多様な手を探索
+        # 中盤: 徐々に下げる
+        # 終盤: 低温(0.1) - 最善手を選ぶ
+        if ctx.move_count < temperature_threshold:
+            ctx.temperature = 1.0
+        elif ctx.move_count < temperature_threshold * 2:
+            # 線形に下げる
+            ctx.temperature = 1.0 - 0.9 * (ctx.move_count - temperature_threshold) / temperature_threshold
+        else:
+            ctx.temperature = 0.1
         
         # 現在の状態をエンコード
         my_hand = ctx.hands[ctx.current_player]
@@ -231,6 +297,7 @@ class MaxEfficiencySelfPlay:
         """複数ゲームを並行してデータを生成"""
         all_examples = []
         wins = {'BLACK': 0, 'WHITE': 0, None: 0}
+        draw_reasons = {'REPETITION': 0, 'MAX_MOVES': 0, 'NO_LEGAL_MOVES': 0, 'OTHER': 0}
         completed_games = 0
         
         if verbose:
@@ -269,8 +336,9 @@ class MaxEfficiencySelfPlay:
                 for i, ctx in enumerate(games_needing_eval):
                     policy = policies[i]
                     
-                    # PUCTでアクションを選択
-                    action = self._select_action_puct(ctx, policy)
+                    # PUCTでアクションを選択（最初のシミュレーションはルート）
+                    is_root = (ctx.mcts_simulation == 0)
+                    action = self._select_action_puct(ctx, policy, is_root=is_root)
                     
                     # シミュレーション用の状態を作成
                     sim_board = copy.deepcopy(ctx.board)
@@ -340,7 +408,8 @@ class MaxEfficiencySelfPlay:
                 # 学習データを作成
                 for state, policy, player in ctx.history:
                     if ctx.winner is None:
-                        value = 0.0
+                        # 引き分けは少しマイナス評価（千日手を避けるよう学習）
+                        value = self.DRAW_VALUE
                     elif ctx.winner == player:
                         value = 1.0
                     else:
@@ -350,6 +419,13 @@ class MaxEfficiencySelfPlay:
                 
                 winner_key = ctx.winner.name if ctx.winner else None
                 wins[winner_key] += 1
+                
+                # 引き分けの理由を記録
+                if ctx.winner is None and ctx.draw_reason:
+                    if ctx.draw_reason in draw_reasons:
+                        draw_reasons[ctx.draw_reason] += 1
+                    else:
+                        draw_reasons['OTHER'] += 1
                 
                 if verbose:
                     pbar.update(1)
@@ -372,5 +448,7 @@ class MaxEfficiencySelfPlay:
             pbar.close()
             print(f"\nGenerated {len(all_examples)} examples from {num_games} games")
             print(f"Results: BLACK={wins['BLACK']}, WHITE={wins['WHITE']}, DRAW={wins[None]}")
+            if wins[None] > 0:
+                print(f"Draw reasons: REPETITION={draw_reasons['REPETITION']}, MAX_MOVES={draw_reasons['MAX_MOVES']}, OTHER={draw_reasons['NO_LEGAL_MOVES'] + draw_reasons['OTHER']}")
         
         return all_examples

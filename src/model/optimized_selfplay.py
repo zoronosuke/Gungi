@@ -35,6 +35,10 @@ class GameContext:
     history: List[Tuple[np.ndarray, np.ndarray, Player]]
     finished: bool = False
     winner: Optional[Player] = None
+    draw_reason: Optional[str] = None  # 引き分けの理由
+    
+    # 千日手検出用
+    position_history: Dict[str, int] = field(default_factory=dict)
     
     # MCTS用の一時状態
     mcts_visit_counts: Dict[int, int] = field(default_factory=dict)
@@ -99,7 +103,7 @@ class OptimizedSelfPlay:
         
         if self.use_fp16:
             states_tensor = states_tensor.half()
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 log_policies, values = self.network(states_tensor)
         else:
             states_tensor = states_tensor.float()
@@ -243,6 +247,7 @@ class OptimizedSelfPlay:
         if not success:
             ctx.finished = True
             ctx.winner = ctx.current_player.opponent
+            ctx.draw_reason = "MOVE_FAILED"
             return
         
         # ゲーム終了チェック
@@ -250,6 +255,17 @@ class OptimizedSelfPlay:
         if is_over:
             ctx.finished = True
             ctx.winner = winner
+            return
+        
+        # 千日手チェック（盤面のハッシュを使用）
+        position_key = self._get_position_hash(ctx)
+        ctx.position_history[position_key] = ctx.position_history.get(position_key, 0) + 1
+        
+        if ctx.position_history[position_key] >= 4:
+            # 同じ局面が4回出現したら千日手
+            ctx.finished = True
+            ctx.winner = None
+            ctx.draw_reason = "REPETITION"
             return
         
         # 手番交代
@@ -260,6 +276,22 @@ class OptimizedSelfPlay:
         if ctx.move_count >= self.MAX_MOVES:
             ctx.finished = True
             ctx.winner = None
+            ctx.draw_reason = "MAX_MOVES"
+    
+    def _get_position_hash(self, ctx: GameContext) -> str:
+        """局面のハッシュを生成（千日手検出用）"""
+        board_str = ""
+        for r in range(9):
+            for c in range(9):
+                stack = ctx.board.get_stack((r, c))
+                if stack.is_empty():
+                    board_str += "."
+                else:
+                    for piece in stack.pieces:
+                        board_str += f"{piece.piece_type.name[0]}{piece.owner.name[0]}"
+                    board_str += "|"
+        board_str += ctx.current_player.name
+        return board_str
     
     def _reset_mcts_state(self, ctx: GameContext, temperature_threshold: int):
         """MCTSの状態をリセット"""
@@ -290,6 +322,7 @@ class OptimizedSelfPlay:
         """
         all_examples = []
         wins = {'BLACK': 0, 'WHITE': 0, None: 0}
+        draw_reasons = {'REPETITION': 0, 'MAX_MOVES': 0, 'OTHER': 0}
         completed_games = 0
         
         if verbose:
@@ -409,10 +442,11 @@ class OptimizedSelfPlay:
                 active_games.remove(ctx)
                 completed_games += 1
                 
-                # 学習データを作成
+                # 学習データを作成（引き分けはペナルティ）
+                draw_value = -0.1 if ctx.winner is None else 0.0
                 for state, policy, player in ctx.history:
                     if ctx.winner is None:
-                        value = 0.0
+                        value = draw_value
                     elif ctx.winner == player:
                         value = 1.0
                     else:
@@ -422,6 +456,13 @@ class OptimizedSelfPlay:
                 
                 winner_key = ctx.winner.name if ctx.winner else None
                 wins[winner_key] += 1
+                
+                # 引き分け理由を記録
+                if ctx.winner is None and ctx.draw_reason:
+                    if ctx.draw_reason in draw_reasons:
+                        draw_reasons[ctx.draw_reason] += 1
+                    else:
+                        draw_reasons['OTHER'] += 1
                 
                 if verbose:
                     pbar.update(1)
@@ -444,6 +485,10 @@ class OptimizedSelfPlay:
             pbar.close()
             print(f"\nGenerated {len(all_examples)} examples from {num_games} games")
             print(f"Results: BLACK={wins['BLACK']}, WHITE={wins['WHITE']}, DRAW={wins[None]}")
+            if wins[None] > 0:
+                print(f"Draw reasons: REPETITION={draw_reasons['REPETITION']}, MAX_MOVES={draw_reasons['MAX_MOVES']}, OTHER={draw_reasons['OTHER']}")
+            avg_moves = len(all_examples) / num_games if num_games > 0 else 0
+            print(f"Average moves per game: {avg_moves:.1f}")
         
         return all_examples
 
