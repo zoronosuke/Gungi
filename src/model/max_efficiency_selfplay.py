@@ -39,9 +39,8 @@ class GameContext:
     # 千日手検出用
     position_history: Dict[str, int] = field(default_factory=dict)
     
-    # 往復検出用（各プレイヤーの直前アクションを記録）
-    last_actions_black: List[int] = field(default_factory=list)
-    last_actions_white: List[int] = field(default_factory=list)
+    # 往復検出用（直前4手のアクションを記録）
+    last_actions: List[int] = field(default_factory=list)
     
     # MCTS用の一時状態
     mcts_visit_counts: Dict[int, int] = field(default_factory=dict)
@@ -60,7 +59,7 @@ class MaxEfficiencySelfPlay:
     """
     
     MAX_MOVES = 300  # 軍儀は複雑なので300手まで許容
-    REPETITION_THRESHOLD = 4  # 千日手判定を4回に（将棋・チェスと同じ）
+    REPETITION_THRESHOLD = 3  # 千日手判定を3回に（早期検出）
     
     # Dirichletノイズのパラメータ（将棋AIと同様）
     DIRICHLET_ALPHA = 0.15  # より小さく（将棋と同じ）
@@ -140,11 +139,10 @@ class MaxEfficiencySelfPlay:
     
     def _is_back_and_forth(self, ctx: GameContext, action_idx: int) -> bool:
         """往復パターン（A→B→A→B）を検出"""
-        # 現在のプレイヤーの直前の手と比較
-        last_actions = ctx.last_actions_black if ctx.current_player == Player.BLACK else ctx.last_actions_white
-        if len(last_actions) >= 1:
-            # 直前の自分の手と同じ駒を動かそうとしている場合
-            if last_actions[-1] == action_idx:
+        # last_actionsが2手以上あれば、2手前と同じ手かチェック
+        if len(ctx.last_actions) >= 2:
+            # 2手前（同じプレイヤーの前の手）と同じならTrue
+            if ctx.last_actions[-2] == action_idx:
                 return True
         return False
     
@@ -274,15 +272,10 @@ class MaxEfficiencySelfPlay:
         # 履歴に記録
         ctx.history.append((ctx.current_state.copy(), action_probs.copy(), ctx.current_player))
         
-        # 各プレイヤーのlast_actionsに記録（往復検出用、最新3手を保持）
-        if ctx.current_player == Player.BLACK:
-            ctx.last_actions_black.append(action_idx)
-            if len(ctx.last_actions_black) > 3:
-                ctx.last_actions_black.pop(0)
-        else:
-            ctx.last_actions_white.append(action_idx)
-            if len(ctx.last_actions_white) > 3:
-                ctx.last_actions_white.pop(0)
+        # last_actionsに記録（往復検出用、最新4手を保持）
+        ctx.last_actions.append(action_idx)
+        if len(ctx.last_actions) > 4:
+            ctx.last_actions.pop(0)
         
         # 手を適用
         move = self.action_encoder.decode_action(action_idx, ctx.current_player, ctx.board)
