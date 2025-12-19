@@ -85,7 +85,7 @@ def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str]]:
     game_history = []
     move_count = 0
     winner = None
-    MAX_MOVES = 200  # クラス定数と統一
+    MAX_MOVES = 300  # クラス定数と統一
     
     while move_count < MAX_MOVES:
         is_over, game_winner = Rules.is_game_over(board)
@@ -150,11 +150,11 @@ class SelfPlay:
     """自己対戦によるデータ生成"""
     
     # 最大手数
-    MAX_MOVES = 200  # ゲームが長引くのは許容
+    MAX_MOVES = 300  # 軍儀は複雑なので300手まで許容
     
     # 引き分けの評価値（千日手と最大手数到達で区別）
     DRAW_VALUE_REPETITION = -0.9  # 千日手は強いペナルティ
-    DRAW_VALUE_MAX_MOVES = -0.1   # 最大手数到達は軽いペナルティ
+    DRAW_VALUE_MAX_MOVES = -0.2   # 最大手数到達は中程度のペナルティ（積極的に勝ちを目指す）
     
     def __init__(
         self,

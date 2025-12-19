@@ -1,12 +1,14 @@
 {
-  "iteration": 1,
-  "total_games": 10,
-  "total_examples": 1463,
+  "iteration": 2,
+  "total_games": 20,
+  "total_examples": 3250,
   "policy_loss_history": [
-    4.843969774246216
+    4.843969774246216,
+    2.836580543518066
   ],
   "value_loss_history": [
-    0.06806427149179702
+    0.06806427149179702,
+    0.019396075279219077
   ],
   "win_stats": {
     "BLACK": 0,
@@ -14,5 +16,5 @@
     "DRAW": 0
   },
   "start_time": "2025-12-19T15:46:20.050686",
-  "last_update_time": "2025-12-19T15:53:49.425128"
+  "last_update_time": "2025-12-19T16:06:58.236082"
 }

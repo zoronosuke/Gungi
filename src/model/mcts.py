@@ -246,7 +246,7 @@ class MCTS:
             if is_over:
                 # 終了局面の価値（現在のノードのプレイヤー視点）
                 if winner is None:
-                    value = -0.1  # 引き分けは軽いペナルティで避ける
+                    value = -0.2  # 引き分けは中程度のペナルティで避ける
                 elif winner == node.state.player:
                     value = 1.0
                 else:

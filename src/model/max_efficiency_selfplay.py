@@ -58,7 +58,7 @@ class MaxEfficiencySelfPlay:
     AlphaZero/将棋AIの手法を参考に改良
     """
     
-    MAX_MOVES = 200  # ゲームが長引くのは許容
+    MAX_MOVES = 300  # 軍儀は複雑なので300手まで許容
     REPETITION_THRESHOLD = 3  # 千日手判定を3回に（早めに検出）
     
     # Dirichletノイズのパラメータ（将棋AIと同様）
@@ -67,7 +67,7 @@ class MaxEfficiencySelfPlay:
     
     # 引き分けの評価値（千日手と最大手数で区別）
     DRAW_VALUE_REPETITION = -0.9  # 千日手は強いペナルティ（同じ手の繰り返しは悪い）
-    DRAW_VALUE_MAX_MOVES = -0.1   # 最大手数到達は軽いペナルティ（長いゲームは許容）
+    DRAW_VALUE_MAX_MOVES = -0.2   # 最大手数到達は中程度のペナルティ（積極的に勝ちを目指す）
     
     def __init__(
         self,
