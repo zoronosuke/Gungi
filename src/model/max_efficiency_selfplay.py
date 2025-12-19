@@ -165,9 +165,9 @@ class MaxEfficiencySelfPlay:
         if not success:
             return False
         
-        # 手を打った後の局面キーを計算（手番は交代後）
+        # 手を打った後の局面キーを計算
         next_key = sim_board.get_position_key(
-            ctx.current_player.opponent, opponent_hand, sim_hand  # 手番交代後の視点
+            ctx.current_player, sim_hand, opponent_hand
         )
         
         # 既に出現した局面かチェック
