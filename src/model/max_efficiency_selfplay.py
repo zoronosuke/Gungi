@@ -39,6 +39,9 @@ class GameContext:
     # 千日手検出用
     position_history: Dict[str, int] = field(default_factory=dict)
     
+    # 往復検出用（直前4手のアクションを記録）
+    last_actions: List[int] = field(default_factory=list)
+    
     # MCTS用の一時状態
     mcts_visit_counts: Dict[int, int] = field(default_factory=dict)
     mcts_total_values: Dict[int, float] = field(default_factory=dict)
@@ -134,13 +137,47 @@ class MaxEfficiencySelfPlay:
         
         return action_indices
     
+    def _is_back_and_forth(self, ctx: GameContext, action_idx: int) -> bool:
+        """往復パターン（A→B→A→B）を検出"""
+        # last_actionsが4手以上あれば、2手前と同じ手かチェック
+        if len(ctx.last_actions) >= 2:
+            # 2手前（同じプレイヤーの前の手）と同じならTrue
+            if ctx.last_actions[-2] == action_idx:
+                return True
+        return False
+    
+    def _would_cause_repetition(self, ctx: GameContext, action_idx: int) -> bool:
+        """この手を打つと既出局面に戻る、または往復パターンになるかチェック"""
+        # 1. 往復パターンをチェック（最も頻繁）
+        if self._is_back_and_forth(ctx, action_idx):
+            return True
+        
+        # 2. 局面の繰り返しをチェック（計算コストが高いので後）
+        sim_board = copy.deepcopy(ctx.board)
+        sim_hand = copy.deepcopy(ctx.hands[ctx.current_player])
+        opponent_hand = ctx.hands[ctx.current_player.opponent]
+        
+        move = self.action_encoder.decode_action(action_idx, ctx.current_player, ctx.board)
+        success, _ = Rules.apply_move(sim_board, move, sim_hand)
+        
+        if not success:
+            return False
+        
+        # 手を打った後の局面キーを計算
+        next_key = sim_board.get_position_key(
+            ctx.current_player, sim_hand, opponent_hand
+        )
+        
+        # 既に出現した局面かチェック
+        return ctx.position_history.get(next_key, 0) >= 1
+    
     def _select_action_puct(
         self, 
         ctx: GameContext, 
         policy: np.ndarray,
         is_root: bool = False
     ) -> int:
-        """PUCTでアクションを選択（AlphaZeroスタイル）"""
+        """PUCTでアクションを選択（AlphaZeroスタイル + 循環回避）"""
         # 合法手でマスク
         legal_mask = np.zeros(7695)
         for action_idx in ctx.legal_actions:
@@ -166,11 +203,22 @@ class MaxEfficiencySelfPlay:
         best_score = -float('inf')
         best_action = ctx.legal_actions[0] if ctx.legal_actions else 0
         
+        # 循環する手をチェック（ルートノードでのみ、計算コスト削減）
+        repetition_actions = set()
+        if is_root:
+            for action_idx in ctx.legal_actions:
+                if self._would_cause_repetition(ctx, action_idx):
+                    repetition_actions.add(action_idx)
+        
         for action_idx in ctx.legal_actions:
             q_value = ctx.mcts_total_values.get(action_idx, 0) / (ctx.mcts_visit_counts.get(action_idx, 0) + 1e-8)
             prior = masked_policy[action_idx]
             u_value = self.c_puct * prior * sqrt_total / (1 + ctx.mcts_visit_counts.get(action_idx, 0))
             score = q_value + u_value
+            
+            # 循環する手には大きなペナルティ
+            if action_idx in repetition_actions:
+                score -= 2.0  # 強いペナルティ
             
             if score > best_score:
                 best_score = score
@@ -179,13 +227,31 @@ class MaxEfficiencySelfPlay:
         return best_action
     
     def _finalize_action(self, ctx: GameContext) -> Tuple[int, np.ndarray]:
-        """MCTSの結果から最終的な行動を選択"""
+        """MCTSの結果から最終的な行動を選択（循環回避）"""
         action_probs = np.zeros(7695)
+        
+        # 循環する手を検出
+        repetition_actions = set()
         for action_idx in ctx.legal_actions:
-            action_probs[action_idx] = ctx.mcts_visit_counts.get(action_idx, 0)
+            if self._would_cause_repetition(ctx, action_idx):
+                repetition_actions.add(action_idx)
+        
+        # 非循環手があれば、循環手の確率を大幅に下げる
+        non_rep_actions = [a for a in ctx.legal_actions if a not in repetition_actions]
+        
+        for action_idx in ctx.legal_actions:
+            count = ctx.mcts_visit_counts.get(action_idx, 0)
+            # 循環する手は訪問回数を大幅に下げる（非循環手があれば）
+            if action_idx in repetition_actions and non_rep_actions:
+                count = count * 0.01  # 99%カット
+            action_probs[action_idx] = count
         
         if ctx.temperature == 0 or ctx.temperature < 0.1:
-            best_action = max(ctx.legal_actions, key=lambda a: ctx.mcts_visit_counts.get(a, 0))
+            # 非循環手から選ぶ
+            if non_rep_actions:
+                best_action = max(non_rep_actions, key=lambda a: ctx.mcts_visit_counts.get(a, 0))
+            else:
+                best_action = max(ctx.legal_actions, key=lambda a: ctx.mcts_visit_counts.get(a, 0))
             final_probs = np.zeros(7695)
             final_probs[best_action] = 1.0
         else:
@@ -205,6 +271,11 @@ class MaxEfficiencySelfPlay:
         """アクションを適用"""
         # 履歴に記録
         ctx.history.append((ctx.current_state.copy(), action_probs.copy(), ctx.current_player))
+        
+        # last_actionsに記録（往復検出用、最新4手を保持）
+        ctx.last_actions.append(action_idx)
+        if len(ctx.last_actions) > 4:
+            ctx.last_actions.pop(0)
         
         # 手を適用
         move = self.action_encoder.decode_action(action_idx, ctx.current_player, ctx.board)
@@ -246,22 +317,10 @@ class MaxEfficiencySelfPlay:
             ctx.draw_reason = "MAX_MOVES"
     
     def _get_position_hash(self, ctx: GameContext) -> str:
-        """局面のハッシュを生成（千日手検出用）"""
-        # 盤面の状態を文字列化
-        board_str = ""
-        for r in range(9):
-            for c in range(9):
-                stack = ctx.board.get_stack((r, c))
-                if stack.is_empty():
-                    board_str += "."
-                else:
-                    # スタック内の全駒を記録
-                    for piece in stack.pieces:
-                        board_str += f"{piece.piece_type.name[0]}{piece.owner.name[0]}"
-                    board_str += "|"
-        # 現在の手番も含める
-        board_str += ctx.current_player.name
-        return board_str
+        """局面のハッシュを生成（千日手検出用）- 持ち駒を含む完全版"""
+        my_hand = ctx.hands[ctx.current_player]
+        opponent_hand = ctx.hands[ctx.current_player.opponent]
+        return ctx.board.get_position_key(ctx.current_player, my_hand, opponent_hand)
     
     def _reset_mcts_state(self, ctx: GameContext, temperature_threshold: int):
         """MCTSの状態をリセット"""

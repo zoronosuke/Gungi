@@ -212,13 +212,33 @@ class MCTS:
         # シミュレーションを実行
         for _ in range(self.num_simulations):
             node = root
+            visited_in_path = set()  # このシミュレーション内で訪問した局面
+            is_cycle = False
             
             # 1. Selection: 葉ノードまで降下
             while node.is_expanded():
+                # 循環検出: 局面キーを取得
+                position_key = node.state.board.get_position_key(
+                    node.state.player,
+                    node.state.my_hand,
+                    node.state.opponent_hand
+                )
+                
+                if position_key in visited_in_path:
+                    # 循環検出 → 千日手ペナルティで終端
+                    node.backpropagate(-0.9)
+                    is_cycle = True
+                    break
+                
+                visited_in_path.add(position_key)
+                
                 child = node.select_child(self.c_puct)
                 if child is None:
                     break
                 node = child
+            
+            if is_cycle:
+                continue  # 次のシミュレーションへ
             
             # 2. ゲーム終了チェック
             is_over, winner = Rules.is_game_over(node.state.board)
@@ -226,7 +246,7 @@ class MCTS:
             if is_over:
                 # 終了局面の価値（現在のノードのプレイヤー視点）
                 if winner is None:
-                    value = 0.0
+                    value = -0.1  # 引き分けは軽いペナルティで避ける
                 elif winner == node.state.player:
                     value = 1.0
                 else:

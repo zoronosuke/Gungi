@@ -239,6 +239,35 @@ class Board:
                     new_board.add_piece((row, col), new_piece)
         return new_board
 
+    def get_position_key(self, player: Player, my_hand: Dict[PieceType, int], opponent_hand: Dict[PieceType, int]) -> str:
+        """
+        完全な局面キーを生成（千日手検出用）
+        盤面 + 手番 + 両者の持ち駒を含める
+        """
+        parts = []
+        
+        # 盤面状態
+        for row in range(BOARD_SIZE):
+            for col in range(BOARD_SIZE):
+                stack = self.stacks[row][col]
+                if stack.is_empty():
+                    parts.append(".")
+                else:
+                    stack_str = ""
+                    for piece in stack.pieces:
+                        stack_str += f"{piece.piece_type.value}{piece.owner.value}"
+                    parts.append(stack_str)
+        
+        # 手番
+        parts.append(f"P{player.value}")
+        
+        # 持ち駒（両者）- ソート順を固定
+        for pt in sorted(PieceType, key=lambda x: x.value):
+            parts.append(f"M{pt.value}:{my_hand.get(pt, 0)}")
+            parts.append(f"O{pt.value}:{opponent_hand.get(pt, 0)}")
+        
+        return "|".join(parts)
+
     def __str__(self):
         """盤面の文字列表現を返す"""
         cell_width = 6

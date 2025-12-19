@@ -85,7 +85,7 @@ def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str]]:
     game_history = []
     move_count = 0
     winner = None
-    MAX_MOVES = 300
+    MAX_MOVES = 200  # クラス定数と統一
     
     while move_count < MAX_MOVES:
         is_over, game_winner = Rules.is_game_over(board)
@@ -271,7 +271,7 @@ class SelfPlay:
         for state, policy, player in game_history:
             # 勝者に基づいて価値を決定
             if winner is None:
-                value = self.DRAW_VALUE  # 引き分けは強いペナルティ
+                value = self.DRAW_VALUE_MAX_MOVES  # 最大手数到達は軽いペナルティ
             elif winner == player:
                 value = 1.0
             else:
