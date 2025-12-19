@@ -182,7 +182,7 @@ class SelfPlay:
     
     def play_game(
         self, 
-        temperature_threshold: int = 20,
+        temperature_threshold: int = 30,
         verbose: bool = False
     ) -> Tuple[List[TrainingExample], Optional[Player]]:
         """
@@ -288,7 +288,7 @@ class SelfPlay:
     def generate_data(
         self, 
         num_games: int,
-        temperature_threshold: int = 20,
+        temperature_threshold: int = 30,
         verbose: bool = True,
         num_workers: int = 1
     ) -> List[TrainingExample]:
@@ -316,7 +316,7 @@ class SelfPlay:
     def _generate_data_serial(
         self, 
         num_games: int,
-        temperature_threshold: int = 20,
+        temperature_threshold: int = 30,
         verbose: bool = True
     ) -> List[TrainingExample]:
         """直列実行版"""
@@ -350,7 +350,7 @@ class SelfPlay:
     def _generate_data_parallel(
         self, 
         num_games: int,
-        temperature_threshold: int = 20,
+        temperature_threshold: int = 30,
         verbose: bool = True,
         num_workers: int = 8
     ) -> List[TrainingExample]:

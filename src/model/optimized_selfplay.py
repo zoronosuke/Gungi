@@ -63,7 +63,7 @@ class OptimizedSelfPlay:
     """
     
     MAX_MOVES = 300  # 軍儀は複雑なので300手まで許容
-    REPETITION_THRESHOLD = 3  # 千日手判定を3回に（早めに検出）
+    REPETITION_THRESHOLD = 4  # 千日手判定を4回に（将棋・チェスと同じ）
     
     # 引き分けの評価値（千日手と最大手数で区別）
     DRAW_VALUE_REPETITION = -0.9  # 千日手は強いペナルティ（同じ手の繰り返しは悪い）
@@ -331,7 +331,7 @@ class OptimizedSelfPlay:
     def generate_data(
         self,
         num_games: int,
-        temperature_threshold: int = 20,
+        temperature_threshold: int = 30,
         verbose: bool = True,
         num_workers: int = 1  # 互換性のため（使用しない）
     ) -> List[TrainingExample]:
