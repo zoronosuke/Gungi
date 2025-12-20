@@ -225,8 +225,8 @@ class MCTS:
                 )
                 
                 if position_key in visited_in_path:
-                    # 循環検出 → 千日手ペナルティで終端
-                    node.backpropagate(-0.9)
+                    # 循環検出 → 中立の評価で終端（学習を妨げない）
+                    node.backpropagate(0.0)
                     is_cycle = True
                     break
                 
@@ -246,7 +246,7 @@ class MCTS:
             if is_over:
                 # 終了局面の価値（現在のノードのプレイヤー視点）
                 if winner is None:
-                    value = -0.2  # 引き分けは中程度のペナルティで避ける
+                    value = 0.0  # 引き分けは中立
                 elif winner == node.state.player:
                     value = 1.0
                 else:

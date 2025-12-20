@@ -61,13 +61,13 @@ class MaxEfficiencySelfPlay:
     MAX_MOVES = 300  # 軍儀は複雑なので300手まで許容
     REPETITION_THRESHOLD = 3  # 千日手判定を3回に（早期検出）
     
-    # Dirichletノイズのパラメータ（将棋AIと同様）
-    DIRICHLET_ALPHA = 0.15  # より小さく（将棋と同じ）
-    DIRICHLET_EPSILON = 0.25  # ノイズの混合率
+    # Dirichletノイズのパラメータ（探索の多様性を強化）
+    DIRICHLET_ALPHA = 0.3   # 大きくして多様性を増やす（初期学習向け）
+    DIRICHLET_EPSILON = 0.5  # ノイズの混合率を上げる（50%ノイズ）
     
-    # 引き分けの評価値（千日手と最大手数で区別）
-    DRAW_VALUE_REPETITION = -0.9  # 千日手は強いペナルティ（同じ手の繰り返しは悪い）
-    DRAW_VALUE_MAX_MOVES = -0.2   # 最大手数到達は中程度のペナルティ（積極的に勝ちを目指す）
+    # 引き分けの評価値（千日手は中立、勝敗のみで学習）
+    DRAW_VALUE_REPETITION = 0.0  # 千日手は中立（ペナルティなし）
+    DRAW_VALUE_MAX_MOVES = 0.0   # 最大手数も中立
     
     def __init__(
         self,
@@ -114,7 +114,7 @@ class MaxEfficiencySelfPlay:
             Player.BLACK: get_initial_hand_pieces(Player.BLACK),
             Player.WHITE: get_initial_hand_pieces(Player.WHITE)
         }
-        return GameContext(
+        ctx = GameContext(
             game_id=game_id,
             board=board,
             current_player=Player.BLACK,
@@ -122,6 +122,12 @@ class MaxEfficiencySelfPlay:
             move_count=0,
             history=[]
         )
+        # 初期局面をposition_historyに登録
+        initial_key = board.get_position_key(
+            Player.BLACK, hands[Player.BLACK], hands[Player.WHITE]
+        )
+        ctx.position_history[initial_key] = 1
+        return ctx
     
     def _get_legal_actions(self, ctx: GameContext) -> List[int]:
         """合法手のアクションインデックスを取得"""
@@ -158,18 +164,20 @@ class MaxEfficiencySelfPlay:
         opponent_hand = ctx.hands[ctx.current_player.opponent]
         
         move = self.action_encoder.decode_action(action_idx, ctx.current_player, ctx.board)
+        if move is None:
+            return False
         success, _ = Rules.apply_move(sim_board, move, sim_hand)
         
         if not success:
             return False
         
-        # 手を打った後の局面キーを計算
+        # 手を打った後の局面キーを計算（手番交代後の相手視点）
         next_key = sim_board.get_position_key(
-            ctx.current_player, sim_hand, opponent_hand
+            ctx.current_player.opponent, opponent_hand, sim_hand
         )
         
-        # 既に出現した局面かチェック
-        return ctx.position_history.get(next_key, 0) >= 1
+        # 既に2回出現した局面に行くと千日手になる（REPETITION_THRESHOLD - 1）
+        return ctx.position_history.get(next_key, 0) >= (self.REPETITION_THRESHOLD - 1)
     
     def _select_action_puct(
         self, 
@@ -203,22 +211,23 @@ class MaxEfficiencySelfPlay:
         best_score = -float('inf')
         best_action = ctx.legal_actions[0] if ctx.legal_actions else 0
         
-        # 循環する手をチェック（ルートノードでのみ、計算コスト削減）
+        # 循環する手を検出して除外（ルートノードでのみ）
         repetition_actions = set()
         if is_root:
             for action_idx in ctx.legal_actions:
                 if self._would_cause_repetition(ctx, action_idx):
                     repetition_actions.add(action_idx)
         
-        for action_idx in ctx.legal_actions:
+        # 非循環手のみを候補にする（循環手しかない場合は全て候補）
+        candidate_actions = [a for a in ctx.legal_actions if a not in repetition_actions]
+        if not candidate_actions:
+            candidate_actions = ctx.legal_actions  # 仕方なく循環手も含める
+        
+        for action_idx in candidate_actions:
             q_value = ctx.mcts_total_values.get(action_idx, 0) / (ctx.mcts_visit_counts.get(action_idx, 0) + 1e-8)
             prior = masked_policy[action_idx]
             u_value = self.c_puct * prior * sqrt_total / (1 + ctx.mcts_visit_counts.get(action_idx, 0))
             score = q_value + u_value
-            
-            # 循環する手には大きなペナルティ
-            if action_idx in repetition_actions:
-                score -= 2.0  # 強いペナルティ
             
             if score > best_score:
                 best_score = score
@@ -236,33 +245,38 @@ class MaxEfficiencySelfPlay:
             if self._would_cause_repetition(ctx, action_idx):
                 repetition_actions.add(action_idx)
         
-        # 非循環手があれば、循環手の確率を大幅に下げる
+        # 非循環手のみを候補にする
         non_rep_actions = [a for a in ctx.legal_actions if a not in repetition_actions]
+        candidate_actions = non_rep_actions if non_rep_actions else ctx.legal_actions
         
-        for action_idx in ctx.legal_actions:
+        # 候補手のみで確率を計算
+        for action_idx in candidate_actions:
             count = ctx.mcts_visit_counts.get(action_idx, 0)
-            # 循環する手は訪問回数を大幅に下げる（非循環手があれば）
-            if action_idx in repetition_actions and non_rep_actions:
-                count = count * 0.01  # 99%カット
             action_probs[action_idx] = count
         
         if ctx.temperature == 0 or ctx.temperature < 0.1:
-            # 非循環手から選ぶ
-            if non_rep_actions:
-                best_action = max(non_rep_actions, key=lambda a: ctx.mcts_visit_counts.get(a, 0))
-            else:
-                best_action = max(ctx.legal_actions, key=lambda a: ctx.mcts_visit_counts.get(a, 0))
+            # 最も訪問回数が多い手を選ぶ
+            best_action = max(candidate_actions, key=lambda a: ctx.mcts_visit_counts.get(a, 0))
             final_probs = np.zeros(7695)
             final_probs[best_action] = 1.0
         else:
-            action_probs = action_probs ** (1.0 / ctx.temperature)
-            total = action_probs.sum()
-            if total > 0:
-                final_probs = action_probs / total
+            # 温度を適用
+            if action_probs.sum() > 0:
+                action_probs = action_probs ** (1.0 / ctx.temperature)
+                total = action_probs.sum()
+                if total > 0:
+                    final_probs = action_probs / total
+                else:
+                    final_probs = np.zeros(7695)
+                    for a in candidate_actions:
+                        final_probs[a] = 1.0 / len(candidate_actions)
             else:
+                # 訪問回数がない場合は均等
                 final_probs = np.zeros(7695)
-                for a in ctx.legal_actions:
-                    final_probs[a] = 1.0 / len(ctx.legal_actions)
+                for a in candidate_actions:
+                    final_probs[a] = 1.0 / len(candidate_actions)
+            
+            # 確率に従って選択
             best_action = np.random.choice(7695, p=final_probs)
         
         return best_action, final_probs
@@ -329,17 +343,18 @@ class MaxEfficiencySelfPlay:
         ctx.mcts_simulation = 0
         ctx.legal_actions = self._get_legal_actions(ctx)
         
-        # 温度スケジューリング（将棋AIスタイル）
-        # 序盤30手: 高温(1.0) - 多様な手を探索
+        # 温度スケジューリング（初期学習向けに高温を維持）
+        # 序盤50手: 高温(1.5) - 非常に多様な手を探索（学習初期は特に重要）
         # 中盤: 徐々に下げる
-        # 終盤: 低温(0.1) - 最善手を選ぶ
+        # 終盤: 中温(0.5) - ある程度の多様性を維持
         if ctx.move_count < temperature_threshold:
-            ctx.temperature = 1.0
-        elif ctx.move_count < temperature_threshold * 2:
-            # 線形に下げる
-            ctx.temperature = 1.0 - 0.9 * (ctx.move_count - temperature_threshold) / temperature_threshold
+            ctx.temperature = 1.5  # 序盤は非常に高い温度
+        elif ctx.move_count < temperature_threshold * 3:
+            # 緩やかに下げる
+            progress = (ctx.move_count - temperature_threshold) / (temperature_threshold * 2)
+            ctx.temperature = 1.5 - 1.0 * progress  # 1.5 -> 0.5
         else:
-            ctx.temperature = 0.1
+            ctx.temperature = 0.5  # 終盤でもある程度の多様性
         
         # 現在の状態をエンコード
         my_hand = ctx.hands[ctx.current_player]
