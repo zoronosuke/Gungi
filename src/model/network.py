@@ -40,18 +40,22 @@ class GungiNetwork(nn.Module):
     """
     軍儀用のニューラルネットワーク（AlphaZero型）
     
-    入力: 盤面の状態 (batch, 91, 9, 9)
+    入力: 盤面の状態 (batch, 93, 9, 9)
     出力:
         - policy: 各手のlog確率分布 (batch, 7695)
         - value: 局面の評価値 (batch, 1), -1〜1
     
     構造:
         入力 → Conv → ResBlock×N → PolicyHead / ValueHead
+    
+    チャンネル構成（93ch）:
+        - ch 0-90: 盤面・持ち駒・手番情報
+        - ch 91-92: 局面履歴情報（千日手対策）
     """
     
     def __init__(
         self,
-        input_channels: int = 91,   # 状態エンコードのチャンネル数
+        input_channels: int = 93,   # 状態エンコードのチャンネル数（91→93に変更：局面履歴追加）
         num_res_blocks: int = 4,    # 15時間テスト用は4ブロック（本番は8）
         num_filters: int = 128,     # フィルター数
         board_size: int = 9,
@@ -92,7 +96,7 @@ class GungiNetwork(nn.Module):
         順伝播
         
         Args:
-            x: 盤面の状態テンソル (batch, 91, 9, 9)
+            x: 盤面の状態テンソル (batch, 93, 9, 9)
         
         Returns:
             policy: 方策のlog確率分布 (batch, 7695)
@@ -169,10 +173,13 @@ def create_model(device: str = 'cpu', test_mode: bool = True) -> GungiNetwork:
     Returns:
         初期化されたGungiNetwork
     """
+    from .encoder import StateEncoder
+    input_channels = StateEncoder.CHANNELS  # 93（履歴チャンネル含む）
+    
     if test_mode:
         # 15時間テスト用: 軽量版
         model = GungiNetwork(
-            input_channels=91,
+            input_channels=input_channels,
             num_res_blocks=4,
             num_filters=128,
             board_size=9,
@@ -181,7 +188,7 @@ def create_model(device: str = 'cpu', test_mode: bool = True) -> GungiNetwork:
     else:
         # 本番用
         model = GungiNetwork(
-            input_channels=91,
+            input_channels=input_channels,
             num_res_blocks=8,
             num_filters=128,
             board_size=9,
@@ -194,11 +201,12 @@ def create_model(device: str = 'cpu', test_mode: bool = True) -> GungiNetwork:
 
 if __name__ == "__main__":
     # テスト
+    from .encoder import StateEncoder
     print("=== GungiNetwork Test ===")
     model = create_model('cpu', test_mode=True)
     
     # ダミー入力
-    dummy_input = torch.randn(1, 91, 9, 9)
+    dummy_input = torch.randn(1, StateEncoder.CHANNELS, 9, 9)
     policy, value = model(dummy_input)
     
     print(f"Input shape: {dummy_input.shape}")

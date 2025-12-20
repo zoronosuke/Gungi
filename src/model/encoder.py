@@ -50,7 +50,7 @@ class StateEncoder:
     """
     盤面状態をニューラルネットワークの入力テンソルに変換するクラス
     
-    入力テンソルの形状: (91, 9, 9)
+    入力テンソルの形状: (93, 9, 9)
     
     チャンネル構成:
     - ch 0-41:   自分の駒（14種類 × 3段）
@@ -58,9 +58,11 @@ class StateEncoder:
     - ch 84-86:  自分の持ち駒（3カテゴリ）
     - ch 87-89:  相手の持ち駒（3カテゴリ）
     - ch 90:     手番（自分の番なら全て1）
+    - ch 91:     現在局面の出現回数（0回=0.0, 1回=0.5, 2回以上=1.0）
+    - ch 92:     繰り返し警告フラグ（position_historyに1回以上あれば1.0）
     """
     
-    CHANNELS = 91
+    CHANNELS = 93
     BOARD_SIZE = BOARD_SIZE  # 9
     MAX_STACK = 3
     
@@ -72,7 +74,8 @@ class StateEncoder:
         board: Board,
         current_player: Player,
         my_hand: Dict[PieceType, int],
-        opponent_hand: Dict[PieceType, int]
+        opponent_hand: Dict[PieceType, int],
+        position_history: Dict[str, int] = None
     ) -> np.ndarray:
         """
         盤面状態をニューラルネットワークの入力に変換
@@ -82,9 +85,10 @@ class StateEncoder:
             current_player: 現在の手番のプレイヤー
             my_hand: 自分の持ち駒 {PieceType: count}
             opponent_hand: 相手の持ち駒 {PieceType: count}
+            position_history: 局面履歴 {position_key: 出現回数}（千日手対策用）
         
         Returns:
-            np.ndarray: shape (91, 9, 9)
+            np.ndarray: shape (93, 9, 9)
         """
         state = np.zeros((self.CHANNELS, self.BOARD_SIZE, self.BOARD_SIZE), 
                          dtype=np.float32)
@@ -130,6 +134,27 @@ class StateEncoder:
         # 手番（ch 90）- 常に自分の番なので1
         state[90, :, :] = 1.0
         
+        # 局面履歴チャンネル（ch 91-92）- 千日手対策
+        if position_history is not None:
+            # 現在局面のキーを生成
+            current_key = board.get_position_key(current_player, my_hand, opponent_hand)
+            occurrence_count = position_history.get(current_key, 0)
+            
+            # ch 91: 現在局面の出現回数（0回=0.0, 1回=0.5, 2回以上=1.0）
+            if occurrence_count == 0:
+                state[91, :, :] = 0.0
+            elif occurrence_count == 1:
+                state[91, :, :] = 0.5
+            else:
+                state[91, :, :] = 1.0
+            
+            # ch 92: 繰り返し警告フラグ（position_historyに1回以上あれば1.0）
+            if occurrence_count >= 1:
+                state[92, :, :] = 1.0
+            else:
+                state[92, :, :] = 0.0
+        # position_historyがNoneの場合はch 91-92は0.0のまま（後方互換性）
+        
         return state
     
     def _get_piece_channel(self, piece_type_idx: int, stack_level: int, 
@@ -169,18 +194,22 @@ class StateEncoder:
         boards: List[Board],
         players: List[Player],
         my_hands: List[Dict[PieceType, int]],
-        opponent_hands: List[Dict[PieceType, int]]
+        opponent_hands: List[Dict[PieceType, int]],
+        position_histories: List[Dict[str, int]] = None
     ) -> np.ndarray:
         """
         複数の盤面をバッチエンコード
         
         Returns:
-            np.ndarray: shape (batch, 91, 9, 9)
+            np.ndarray: shape (batch, 93, 9, 9)
         """
+        if position_histories is None:
+            position_histories = [None] * len(boards)
+        
         batch = [
-            self.encode(board, player, my_hand, opp_hand)
-            for board, player, my_hand, opp_hand 
-            in zip(boards, players, my_hands, opponent_hands)
+            self.encode(board, player, my_hand, opp_hand, pos_hist)
+            for board, player, my_hand, opp_hand, pos_hist
+            in zip(boards, players, my_hands, opponent_hands, position_histories)
         ]
         return np.stack(batch, axis=0)
 

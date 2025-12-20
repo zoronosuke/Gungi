@@ -172,8 +172,11 @@ class GungiAI:
         if len(legal_moves) == 1:
             return legal_moves[0], 0.0
         
-        # 状態をエンコード
-        state = self.state_encoder.encode(board, current_player, hand_pieces, opponent_hand)
+        # 状態をエンコード（API推論では局面履歴なし）
+        state = self.state_encoder.encode(
+            board, current_player, hand_pieces, opponent_hand,
+            position_history=None  # API推論では履歴なし
+        )
         
         # ニューラルネットワークで評価
         with torch.no_grad():

@@ -82,6 +82,13 @@ def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str]]:
         Player.WHITE: get_initial_hand_pieces(Player.WHITE)
     }
     
+    # 千日手検出用の局面履歴
+    position_history = {}
+    initial_key = board.get_position_key(
+        Player.BLACK, hands[Player.BLACK], hands[Player.WHITE]
+    )
+    position_history[initial_key] = 1
+    
     game_history = []
     move_count = 0
     winner = None
@@ -96,12 +103,13 @@ def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str]]:
         my_hand = hands[current_player]
         opponent_hand = hands[current_player.opponent]
         
-        state = state_encoder.encode(board, current_player, my_hand, opponent_hand)
+        state = state_encoder.encode(board, current_player, my_hand, opponent_hand, position_history=position_history)
         temperature = 1.0 if move_count < _global_temperature_threshold else 0.1
         
         action_idx, action_probs = mcts.search(
             board, current_player, my_hand, opponent_hand,
-            temperature=temperature
+            temperature=temperature,
+            position_history=position_history
         )
         
         game_history.append((state.copy(), action_probs.copy(), current_player))
@@ -112,7 +120,13 @@ def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str]]:
         if not success:
             break
         
+        # 手番交代前に局面履歴を更新
         current_player = current_player.opponent
+        position_key = board.get_position_key(
+            current_player, hands[current_player], hands[current_player.opponent]
+        )
+        position_history[position_key] = position_history.get(position_key, 0) + 1
+        
         move_count += 1
     
     if move_count >= MAX_MOVES:
@@ -206,6 +220,13 @@ class SelfPlay:
             Player.WHITE: get_initial_hand_pieces(Player.WHITE)
         }
         
+        # 千日手検出用の局面履歴
+        position_history = {}
+        initial_key = board.get_position_key(
+            Player.BLACK, hands[Player.BLACK], hands[Player.WHITE]
+        )
+        position_history[initial_key] = 1
+        
         # ゲームデータを記録
         game_history = []  # [(state, policy, player), ...]
         
@@ -219,21 +240,23 @@ class SelfPlay:
                 winner = game_winner
                 break
             
-            # 現在の状態をエンコード
+            # 現在の状態をエンコード（局面履歴を含む）
             my_hand = hands[current_player]
             opponent_hand = hands[current_player.opponent]
             
             state = self.state_encoder.encode(
-                board, current_player, my_hand, opponent_hand
+                board, current_player, my_hand, opponent_hand,
+                position_history=position_history
             )
             
             # 温度を決定
             temperature = 1.0 if move_count < temperature_threshold else 0.1
             
-            # MCTSで探索
+            # MCTSで探索（局面履歴を渡す）
             action_idx, action_probs = self.mcts.search(
                 board, current_player, my_hand, opponent_hand,
-                temperature=temperature
+                temperature=temperature,
+                position_history=position_history
             )
             
             # データを記録
@@ -254,6 +277,13 @@ class SelfPlay:
             
             # 手番を交代
             current_player = current_player.opponent
+            
+            # 局面履歴を更新
+            position_key = board.get_position_key(
+                current_player, hands[current_player], hands[current_player.opponent]
+            )
+            position_history[position_key] = position_history.get(position_key, 0) + 1
+            
             move_count += 1
         
         # 最大手数に達した場合は引き分け

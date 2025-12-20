@@ -24,6 +24,12 @@ class GameState:
     player: Player
     my_hand: Dict[PieceType, int]
     opponent_hand: Dict[PieceType, int]
+    position_history: Dict[str, int] = None  # 局面履歴（千日手対策用）
+    
+    def __post_init__(self):
+        """position_historyの初期化"""
+        if self.position_history is None:
+            self.position_history = {}
     
     def copy(self) -> 'GameState':
         """ディープコピーを作成"""
@@ -31,13 +37,21 @@ class GameState:
             board=self.board.copy(),
             player=self.player,
             my_hand=copy.deepcopy(self.my_hand),
-            opponent_hand=copy.deepcopy(self.opponent_hand)
+            opponent_hand=copy.deepcopy(self.opponent_hand),
+            position_history=copy.deepcopy(self.position_history)
         )
     
     def switch_player(self):
         """手番を交代（持ち駒も入れ替え）"""
         self.player = self.player.opponent
         self.my_hand, self.opponent_hand = self.opponent_hand, self.my_hand
+    
+    def update_position_history(self):
+        """現在の局面をposition_historyに追加"""
+        position_key = self.board.get_position_key(
+            self.player, self.my_hand, self.opponent_hand
+        )
+        self.position_history[position_key] = self.position_history.get(position_key, 0) + 1
 
 
 class MCTSNode:
@@ -179,7 +193,8 @@ class MCTS:
         player: Player,
         my_hand: Dict[PieceType, int],
         opponent_hand: Dict[PieceType, int],
-        temperature: float = 1.0
+        temperature: float = 1.0,
+        position_history: Dict[str, int] = None
     ) -> Tuple[int, np.ndarray]:
         """
         MCTSで探索を行う
@@ -192,6 +207,7 @@ class MCTS:
             temperature: 行動選択の温度パラメータ
                         1.0: 訪問回数に比例した確率で選択
                         0.0(または0に近い値): 最も訪問回数が多い手を選択
+            position_history: 局面履歴 {position_key: 出現回数}（千日手対策用）
         
         Returns:
             best_action: 選択された行動インデックス
@@ -202,7 +218,8 @@ class MCTS:
             board=board.copy(),
             player=player,
             my_hand=copy.deepcopy(my_hand),
-            opponent_hand=copy.deepcopy(opponent_hand)
+            opponent_hand=copy.deepcopy(opponent_hand),
+            position_history=copy.deepcopy(position_history) if position_history else {}
         )
         root = MCTSNode(state=root_state)
         
@@ -310,12 +327,13 @@ class MCTS:
             # 合法手がない = 負け
             return -1.0
         
-        # 状態をエンコード
+        # 状態をエンコード（局面履歴を含む）
         state_tensor = self.state_encoder.encode(
             state.board,
             state.player,
             state.my_hand,
-            state.opponent_hand
+            state.opponent_hand,
+            position_history=state.position_history
         )
         state_tensor = torch.from_numpy(state_tensor).unsqueeze(0).to(self.device)
         

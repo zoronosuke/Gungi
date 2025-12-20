@@ -62,8 +62,8 @@ class MaxEfficiencySelfPlay:
     REPETITION_THRESHOLD = 3  # 千日手判定を3回に（早期検出）
     
     # Dirichletノイズのパラメータ（探索の多様性を強化）
-    DIRICHLET_ALPHA = 0.3   # 大きくして多様性を増やす（初期学習向け）
-    DIRICHLET_EPSILON = 0.5  # ノイズの混合率を上げる（50%ノイズ）
+    DIRICHLET_ALPHA = 0.5   # さらに大きくして多様性を最大化（初期学習向け）
+    DIRICHLET_EPSILON = 0.6  # ノイズの混合率を60%に（学習初期は探索重視）
     
     # 引き分けの評価値（千日手は中立、勝敗のみで学習）
     DRAW_VALUE_REPETITION = 0.0  # 千日手は中立（ペナルティなし）
@@ -144,11 +144,14 @@ class MaxEfficiencySelfPlay:
         return action_indices
     
     def _is_back_and_forth(self, ctx: GameContext, action_idx: int) -> bool:
-        """往復パターン（A→B→A→B）を検出"""
-        # last_actionsが2手以上あれば、2手前と同じ手かチェック
+        """往復パターン（A→B→A→B）および長いサイクルを検出"""
+        # 2手前（同じプレイヤーの前の手）と同じならTrue
         if len(ctx.last_actions) >= 2:
-            # 2手前（同じプレイヤーの前の手）と同じならTrue
             if ctx.last_actions[-2] == action_idx:
+                return True
+        # 4手前（2手前と同じパターンの繰り返し）もチェック
+        if len(ctx.last_actions) >= 4:
+            if ctx.last_actions[-4] == action_idx:
                 return True
         return False
     
@@ -211,17 +214,17 @@ class MaxEfficiencySelfPlay:
         best_score = -float('inf')
         best_action = ctx.legal_actions[0] if ctx.legal_actions else 0
         
-        # 循環する手を検出して除外（ルートノードでのみ）
+        # 循環する手を検出して除外（常にチェック、学習中は特に重要）
         repetition_actions = set()
-        if is_root:
-            for action_idx in ctx.legal_actions:
-                if self._would_cause_repetition(ctx, action_idx):
-                    repetition_actions.add(action_idx)
+        for action_idx in ctx.legal_actions:
+            if self._would_cause_repetition(ctx, action_idx):
+                repetition_actions.add(action_idx)
         
-        # 非循環手のみを候補にする（循環手しかない場合は全て候補）
+        # 非循環手のみを候補にする（循環手しかない場合のみ全て候補）
         candidate_actions = [a for a in ctx.legal_actions if a not in repetition_actions]
         if not candidate_actions:
-            candidate_actions = ctx.legal_actions  # 仕方なく循環手も含める
+            # 本当に循環手しかない場合のみ許可（稀なケース）
+            candidate_actions = ctx.legal_actions
         
         for action_idx in candidate_actions:
             q_value = ctx.mcts_total_values.get(action_idx, 0) / (ctx.mcts_visit_counts.get(action_idx, 0) + 1e-8)
@@ -344,23 +347,22 @@ class MaxEfficiencySelfPlay:
         ctx.legal_actions = self._get_legal_actions(ctx)
         
         # 温度スケジューリング（初期学習向けに高温を維持）
-        # 序盤50手: 高温(1.5) - 非常に多様な手を探索（学習初期は特に重要）
-        # 中盤: 徐々に下げる
-        # 終盤: 中温(0.5) - ある程度の多様性を維持
+        # 序盤: 高温(2.0) - 非常に多様な手を探索（学習初期は特に重要）
+        # 中盤: 高温維持(1.5)
+        # 終盤: 中温(1.0) - 多様性を維持しつつ少し収束
         if ctx.move_count < temperature_threshold:
-            ctx.temperature = 1.5  # 序盤は非常に高い温度
+            ctx.temperature = 2.0  # 序盤は最大温度
         elif ctx.move_count < temperature_threshold * 3:
-            # 緩やかに下げる
-            progress = (ctx.move_count - temperature_threshold) / (temperature_threshold * 2)
-            ctx.temperature = 1.5 - 1.0 * progress  # 1.5 -> 0.5
+            ctx.temperature = 1.5  # 中盤も高温維持
         else:
-            ctx.temperature = 0.5  # 終盤でもある程度の多様性
+            ctx.temperature = 1.0  # 終盤でも十分な多様性
         
-        # 現在の状態をエンコード
+        # 現在の状態をエンコード（局面履歴を含む）
         my_hand = ctx.hands[ctx.current_player]
         opponent_hand = ctx.hands[ctx.current_player.opponent]
         ctx.current_state = self.state_encoder.encode(
-            ctx.board, ctx.current_player, my_hand, opponent_hand
+            ctx.board, ctx.current_player, my_hand, opponent_hand,
+            position_history=ctx.position_history
         )
     
     def generate_data(
@@ -424,10 +426,11 @@ class MaxEfficiencySelfPlay:
                     success, _ = Rules.apply_move(sim_board, move, sim_hand)
                     
                     if success:
-                        # 相手視点での状態をエンコード
+                        # 相手視点での状態をエンコード（局面履歴を含む）
                         opponent_hand = ctx.hands[ctx.current_player.opponent]
                         sim_state = self.state_encoder.encode(
-                            sim_board, ctx.current_player.opponent, opponent_hand, sim_hand
+                            sim_board, ctx.current_player.opponent, opponent_hand, sim_hand,
+                            position_history=ctx.position_history
                         )
                         sim_states.append(sim_state)
                         sim_games.append(ctx)
