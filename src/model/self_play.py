@@ -166,9 +166,11 @@ class SelfPlay:
     # 最大手数
     MAX_MOVES = 300  # 軍儀は複雑なので300手まで許容
     
-    # 引き分けの評価値（千日手は中立、勝敗のみで学習）
-    DRAW_VALUE_REPETITION = 0.0  # 千日手は中立
-    DRAW_VALUE_MAX_MOVES = 0.0   # 最大手数到達も中立
+    # 引き分けの評価値（強いペナルティで引き分け回避を促進）
+    # Value=0収束問題対策: 引き分けに強いペナルティを与えることで
+    # AIが勝敗を目指すよう学習を誘導
+    DRAW_VALUE_REPETITION = -0.95  # 千日手は強いペナルティ
+    DRAW_VALUE_MAX_MOVES = -0.5    # 最大手数到達も中程度のペナルティ
     
     def __init__(
         self,
@@ -286,13 +288,22 @@ class SelfPlay:
             
             move_count += 1
         
+        # 引き分け理由を記録
+        draw_reason = None
+        
         # 最大手数に達した場合は引き分け
         if move_count >= self.MAX_MOVES:
             winner = None
+            draw_reason = 'MAX_MOVES'
+        elif winner is None and move_count > 0:
+            # 千日手の可能性（ゲームが途中で終了し、勝者がいない場合）
+            draw_reason = 'REPETITION'
         
         if verbose:
             if winner:
                 print(f"Game ended: {winner.name} wins after {move_count} moves")
+            elif draw_reason:
+                print(f"Game ended: Draw ({draw_reason}) after {move_count} moves")
             else:
                 print(f"Game ended: Draw after {move_count} moves")
         
@@ -301,7 +312,11 @@ class SelfPlay:
         for state, policy, player in game_history:
             # 勝者に基づいて価値を決定
             if winner is None:
-                value = self.DRAW_VALUE_MAX_MOVES  # 最大手数到達は軽いペナルティ
+                # 引き分け理由に応じたペナルティ
+                if draw_reason == 'REPETITION':
+                    value = self.DRAW_VALUE_REPETITION  # 千日手は強いペナルティ
+                else:
+                    value = self.DRAW_VALUE_MAX_MOVES   # 最大手数は中程度のペナルティ
             elif winner == player:
                 value = 1.0
             else:
@@ -462,19 +477,83 @@ class SelfPlay:
 
 
 class ReplayBuffer:
-    """学習データを保持するリプレイバッファ"""
+    """学習データを保持するリプレイバッファ
     
-    def __init__(self, max_size: int = 50000):
+    Value予測の0収束問題対策:
+    - 引き分けデータの比率を制限することで、Value Networkが
+      「引き分けが最善」と学習することを防ぐ
+    """
+    
+    # 引き分けデータの最大比率（Value=0収束問題対策）
+    MAX_DRAW_RATIO = 0.3  # バッファ内の引き分けデータは最大30%
+    
+    def __init__(self, max_size: int = 50000, max_draw_ratio: float = None):
         self.max_size = max_size
+        self.max_draw_ratio = max_draw_ratio if max_draw_ratio is not None else self.MAX_DRAW_RATIO
         self.buffer: List[TrainingExample] = []
     
     def add(self, examples: List[TrainingExample]):
-        """データを追加"""
+        """データを追加（引き分け比率を制限）"""
         self.buffer.extend(examples)
         
         # 最大サイズを超えたら古いデータを削除
         if len(self.buffer) > self.max_size:
             self.buffer = self.buffer[-self.max_size:]
+        
+        # 引き分け比率の制限を適用
+        self._balance_draw_ratio()
+    
+    def _balance_draw_ratio(self):
+        """引き分けデータの比率を制限
+        
+        Value=0収束問題対策: 引き分けデータが多すぎると
+        Value Networkが「全て引き分け」と予測するようになる。
+        これを防ぐため、引き分けデータの比率を制限する。
+        """
+        if len(self.buffer) == 0:
+            return
+        
+        # 引き分けデータと非引き分けデータを分離
+        # Value が -0.5 〜 0.5 の範囲を「引き分け相当」とみなす
+        draw_examples = [ex for ex in self.buffer if -0.5 <= ex.value <= 0.5]
+        non_draw_examples = [ex for ex in self.buffer if ex.value < -0.5 or ex.value > 0.5]
+        
+        total = len(self.buffer)
+        draw_count = len(draw_examples)
+        current_ratio = draw_count / total
+        
+        # 引き分け比率が閾値を超えている場合、ランダムに削除
+        if current_ratio > self.max_draw_ratio:
+            # 目標の引き分け数を計算
+            target_draw_count = int(len(non_draw_examples) * self.max_draw_ratio / (1 - self.max_draw_ratio))
+            target_draw_count = max(target_draw_count, 1)  # 最低1つは残す
+            
+            if target_draw_count < len(draw_examples):
+                # ランダムに引き分けデータを選択
+                np.random.shuffle(draw_examples)
+                draw_examples = draw_examples[:target_draw_count]
+            
+            # バッファを再構築
+            self.buffer = non_draw_examples + draw_examples
+            np.random.shuffle(self.buffer)  # シャッフル
+    
+    def get_value_distribution(self) -> dict:
+        """現在のValue分布を取得（デバッグ用）"""
+        if len(self.buffer) == 0:
+            return {'win': 0, 'loss': 0, 'draw': 0, 'total': 0}
+        
+        values = [ex.value for ex in self.buffer]
+        win_count = sum(1 for v in values if v > 0.5)
+        loss_count = sum(1 for v in values if v < -0.5)
+        draw_count = sum(1 for v in values if -0.5 <= v <= 0.5)
+        
+        return {
+            'win': win_count,
+            'loss': loss_count,
+            'draw': draw_count,
+            'total': len(self.buffer),
+            'draw_ratio': draw_count / len(self.buffer)
+        }
     
     def sample(self, batch_size: int) -> List[TrainingExample]:
         """ランダムにサンプリング"""

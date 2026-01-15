@@ -21,6 +21,10 @@ from ..engine.rules import Rules
 from ..engine.initial_setup import load_initial_board, get_initial_hand_pieces
 from .encoder import StateEncoder, ActionEncoder
 from .self_play import TrainingExample
+from .training_stats import (
+    TrainingStatsCollector, GameStats, MoveStats, IterationStats,
+    compute_policy_entropy, compute_top_k_prob
+)
 
 
 @dataclass
@@ -49,6 +53,13 @@ class GameContext:
     legal_actions: List[int] = field(default_factory=list)
     current_state: Optional[np.ndarray] = None
     temperature: float = 1.0
+    
+    # 統計収集用
+    start_time: float = 0.0
+    move_stats: List[MoveStats] = field(default_factory=list)
+    value_predictions_black: List[float] = field(default_factory=list)
+    value_predictions_white: List[float] = field(default_factory=list)
+    back_and_forth_count: int = 0  # 往復運動の回数
 
 
 class MaxEfficiencySelfPlay:
@@ -59,15 +70,18 @@ class MaxEfficiencySelfPlay:
     """
     
     MAX_MOVES = 300  # 軍儀は複雑なので300手まで許容
-    REPETITION_THRESHOLD = 3  # 千日手判定を3回に（早期検出）
+    REPETITION_THRESHOLD = 2  # 千日手判定を2回に（より早期検出）
     
-    # Dirichletノイズのパラメータ（探索の多様性を強化）
-    DIRICHLET_ALPHA = 0.5   # さらに大きくして多様性を最大化（初期学習向け）
-    DIRICHLET_EPSILON = 0.6  # ノイズの混合率を60%に（学習初期は探索重視）
+    # Dirichletノイズのパラメータ（探索多様性強化）
+    DIRICHLET_ALPHA = 0.3   # 将棋は0.3が標準
+    DIRICHLET_EPSILON = 0.5  # ノイズの混合率50%（千日手対策で強化）
     
-    # 引き分けの評価値（千日手は中立、勝敗のみで学習）
-    DRAW_VALUE_REPETITION = 0.0  # 千日手は中立（ペナルティなし）
-    DRAW_VALUE_MAX_MOVES = 0.0   # 最大手数も中立
+    # 引き分けの評価値（強いペナルティで引き分け回避を促進）
+    DRAW_VALUE_REPETITION = -0.99  # 千日手は最大ペナルティ（負けとほぼ同等）
+    DRAW_VALUE_MAX_MOVES = -0.7    # 最大手数もペナルティ強化
+    
+    # 循環手へのペナルティ（MCTSのQ値に加算）
+    REPETITION_PENALTY = -0.5  # 循環しそうな手にペナルティ
     
     def __init__(
         self,
@@ -144,43 +158,23 @@ class MaxEfficiencySelfPlay:
         return action_indices
     
     def _is_back_and_forth(self, ctx: GameContext, action_idx: int) -> bool:
-        """往復パターン（A→B→A→B）および長いサイクルを検出"""
-        # 2手前（同じプレイヤーの前の手）と同じならTrue
-        if len(ctx.last_actions) >= 2:
-            if ctx.last_actions[-2] == action_idx:
-                return True
-        # 4手前（2手前と同じパターンの繰り返し）もチェック
-        if len(ctx.last_actions) >= 4:
-            if ctx.last_actions[-4] == action_idx:
-                return True
+        """往復パターンおよび長いサイクルを検出（拡張版）"""
+        # 同じプレイヤーの過去の手と比較（2,4,6,8手前）
+        for offset in [2, 4, 6, 8]:
+            if len(ctx.last_actions) >= offset:
+                if ctx.last_actions[-offset] == action_idx:
+                    return True
         return False
     
     def _would_cause_repetition(self, ctx: GameContext, action_idx: int) -> bool:
-        """この手を打つと既出局面に戻る、または往復パターンになるかチェック"""
-        # 1. 往復パターンをチェック（最も頻繁）
-        if self._is_back_and_forth(ctx, action_idx):
-            return True
+        """この手を打つと往復パターンになるかチェック（軽量版）
         
-        # 2. 局面の繰り返しをチェック（計算コストが高いので後）
-        sim_board = copy.deepcopy(ctx.board)
-        sim_hand = copy.deepcopy(ctx.hands[ctx.current_player])
-        opponent_hand = ctx.hands[ctx.current_player.opponent]
-        
-        move = self.action_encoder.decode_action(action_idx, ctx.current_player, ctx.board)
-        if move is None:
-            return False
-        success, _ = Rules.apply_move(sim_board, move, sim_hand)
-        
-        if not success:
-            return False
-        
-        # 手を打った後の局面キーを計算（手番交代後の相手視点）
-        next_key = sim_board.get_position_key(
-            ctx.current_player.opponent, opponent_hand, sim_hand
-        )
-        
-        # 既に2回出現した局面に行くと千日手になる（REPETITION_THRESHOLD - 1）
-        return ctx.position_history.get(next_key, 0) >= (self.REPETITION_THRESHOLD - 1)
+        注意: 完全な局面シミュレーションは計算コストが高いため、
+        アクション履歴ベースの往復パターン検出のみを行う。
+        実際の千日手検出はゲーム進行時に局面ハッシュで行う。
+        """
+        # 往復パターンをチェック（軽量）
+        return self._is_back_and_forth(ctx, action_idx)
     
     def _select_action_puct(
         self, 
@@ -230,7 +224,13 @@ class MaxEfficiencySelfPlay:
             q_value = ctx.mcts_total_values.get(action_idx, 0) / (ctx.mcts_visit_counts.get(action_idx, 0) + 1e-8)
             prior = masked_policy[action_idx]
             u_value = self.c_puct * prior * sqrt_total / (1 + ctx.mcts_visit_counts.get(action_idx, 0))
-            score = q_value + u_value
+            
+            # 循環手にはペナルティを加算
+            penalty = 0.0
+            if action_idx in repetition_actions:
+                penalty = self.REPETITION_PENALTY
+            
+            score = q_value + u_value + penalty
             
             if score > best_score:
                 best_score = score
@@ -289,9 +289,9 @@ class MaxEfficiencySelfPlay:
         # 履歴に記録
         ctx.history.append((ctx.current_state.copy(), action_probs.copy(), ctx.current_player))
         
-        # last_actionsに記録（往復検出用、最新4手を保持）
+        # last_actionsに記録（往復検出用、最新12手を保持）
         ctx.last_actions.append(action_idx)
-        if len(ctx.last_actions) > 4:
+        if len(ctx.last_actions) > 12:
             ctx.last_actions.pop(0)
         
         # 手を適用
@@ -370,10 +370,16 @@ class MaxEfficiencySelfPlay:
         num_games: int,
         temperature_threshold: int = 30,
         verbose: bool = True,
-        num_workers: int = 1  # 互換性のため（使用しない）
-    ) -> List[TrainingExample]:
-        """複数ゲームを並行してデータを生成"""
+        num_workers: int = 1,  # 互換性のため（使用しない）
+        collect_stats: bool = True  # 統計収集フラグ
+    ) -> Tuple[List[TrainingExample], List[GameStats]]:
+        """複数ゲームを並行してデータを生成
+        
+        Returns:
+            (examples, game_stats): 学習用データとゲームごとの詳細統計
+        """
         all_examples = []
+        all_game_stats = []  # 統計収集用
         wins = {'BLACK': 0, 'WHITE': 0, None: 0}
         draw_reasons = {'REPETITION': 0, 'MAX_MOVES': 0, 'NO_LEGAL_MOVES': 0, 'OTHER': 0}
         completed_games = 0
@@ -389,6 +395,7 @@ class MaxEfficiencySelfPlay:
         # 初期ゲームを作成
         while len(active_games) < self.num_parallel_games and next_game_id < num_games:
             ctx = self._create_game_context(next_game_id)
+            ctx.start_time = time.time()  # 開始時刻を記録
             self._reset_mcts_state(ctx, temperature_threshold)
             active_games.append(ctx)
             next_game_id += 1
@@ -471,6 +478,41 @@ class MaxEfficiencySelfPlay:
                 if ctx.mcts_simulation >= self.mcts_simulations:
                     # MCTS完了、手を選択して適用
                     action, action_probs = self._finalize_action(ctx)
+                    
+                    # 統計を記録（手を適用する前に）
+                    if collect_stats:
+                        policy_entropy = compute_policy_entropy(action_probs)
+                        # この手番での推論結果からValue予測を取得
+                        value_idx = games_needing_eval.index(ctx) if ctx in games_needing_eval else -1
+                        value_pred = values[value_idx] if value_idx >= 0 else 0.0
+                        
+                        top1_prob = compute_top_k_prob(action_probs, 1)
+                        top3_prob = compute_top_k_prob(action_probs, 3)
+                        total_visits = sum(ctx.mcts_visit_counts.values())
+                        is_rep_risk = self._would_cause_repetition(ctx, action)
+                        
+                        # 往復検出を記録
+                        if self._is_back_and_forth(ctx, action):
+                            ctx.back_and_forth_count += 1
+                        
+                        move_stat = MoveStats(
+                            move_number=ctx.move_count + 1,
+                            policy_entropy=float(policy_entropy),
+                            value_prediction=float(value_pred),
+                            mcts_visits=total_visits,
+                            top_move_prob=float(top1_prob),
+                            top3_move_prob=float(top3_prob),
+                            temperature=ctx.temperature,
+                            is_repetition_risk=is_rep_risk
+                        )
+                        ctx.move_stats.append(move_stat)
+                        
+                        # プレイヤー別のValue予測を記録
+                        if ctx.current_player == Player.BLACK:
+                            ctx.value_predictions_black.append(float(value_pred))
+                        else:
+                            ctx.value_predictions_white.append(float(value_pred))
+                    
                     self._apply_action(ctx, action, action_probs)
                     
                     if ctx.finished:
@@ -509,6 +551,30 @@ class MaxEfficiencySelfPlay:
                     else:
                         draw_reasons['OTHER'] += 1
                 
+                # ゲームの統計を作成
+                if collect_stats:
+                    game_duration = time.time() - ctx.start_time
+                    winner_str = ctx.winner.name if ctx.winner else "DRAW"
+                    term_reason = ctx.draw_reason if ctx.winner is None else "CHECKMATE"
+                    
+                    # 千日手カウント（同一局面3回以上）
+                    rep_count = sum(1 for c in ctx.position_history.values() if c >= 2)
+                    
+                    game_stat = GameStats(
+                        game_id=ctx.game_id,
+                        winner=winner_str,
+                        termination_reason=term_reason or "UNKNOWN",
+                        total_moves=ctx.move_count,
+                        game_duration_seconds=game_duration,
+                        move_stats=ctx.move_stats,
+                        value_predictions_black=ctx.value_predictions_black,
+                        value_predictions_white=ctx.value_predictions_white,
+                        repetition_count=rep_count,
+                        back_and_forth_count=ctx.back_and_forth_count
+                    )
+                    game_stat.compute_aggregates()
+                    all_game_stats.append(game_stat)
+                
                 if verbose:
                     pbar.update(1)
                     pbar.set_postfix({
@@ -522,6 +588,7 @@ class MaxEfficiencySelfPlay:
                 # 新しいゲームを追加
                 if next_game_id < num_games:
                     new_ctx = self._create_game_context(next_game_id)
+                    new_ctx.start_time = time.time()
                     self._reset_mcts_state(new_ctx, temperature_threshold)
                     active_games.append(new_ctx)
                     next_game_id += 1
@@ -532,5 +599,14 @@ class MaxEfficiencySelfPlay:
             print(f"Results: BLACK={wins['BLACK']}, WHITE={wins['WHITE']}, DRAW={wins[None]}")
             if wins[None] > 0:
                 print(f"Draw reasons: REPETITION={draw_reasons['REPETITION']}, MAX_MOVES={draw_reasons['MAX_MOVES']}, OTHER={draw_reasons['NO_LEGAL_MOVES'] + draw_reasons['OTHER']}")
+            
+            # 統計サマリーを表示
+            if collect_stats and all_game_stats:
+                avg_entropy = np.mean([g.avg_policy_entropy for g in all_game_stats])
+                avg_value = np.mean([g.avg_value_prediction for g in all_game_stats])
+                avg_length = np.mean([g.total_moves for g in all_game_stats])
+                print(f"Avg policy entropy: {avg_entropy:.4f}")
+                print(f"Avg value prediction: {avg_value:.4f}")
+                print(f"Avg game length: {avg_length:.1f} moves")
         
-        return all_examples
+        return all_examples, all_game_stats

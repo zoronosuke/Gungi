@@ -22,6 +22,7 @@ from .self_play import SelfPlay, TrainingExample, ReplayBuffer
 from .gpu_self_play import GPUSelfPlay
 from .max_efficiency_selfplay import MaxEfficiencySelfPlay
 from .optimized_selfplay import OptimizedSelfPlay
+from .training_stats import TrainingStatsCollector, IterationStats, GameStats
 
 
 class GungiDataset(Dataset):
@@ -155,6 +156,10 @@ class Trainer:
             'total_loss': avg_policy_loss + avg_value_loss
         }
     
+    # Value予測の0収束問題対策パラメータ
+    VALUE_REGULARIZATION_WEIGHT = 0.01  # Value正則化の重み
+    ENTROPY_BONUS_WEIGHT = 0.01         # Policyエントロピーボーナスの重み
+    
     def _compute_loss(
         self,
         log_policies: torch.Tensor,
@@ -165,18 +170,38 @@ class Trainer:
         """
         損失を計算
         
-        Policy Loss: クロスエントロピー
-            loss = -Σ target_policy * log(pred_policy)
+        Policy Loss: クロスエントロピー + エントロピーボーナス
+            loss = -Σ target_policy * log(pred_policy) - β * entropy(pred_policy)
         
-        Value Loss: MSE
-            loss = (target_value - pred_value)^2
+        Value Loss: MSE + 正則化
+            loss = (target_value - pred_value)^2 + λ * value_regularization
+        
+        Value予測の0収束問題対策:
+        1. Value正則化: 極端な予測（常に0など）を抑制
+        2. Policyエントロピーボーナス: 探索多様性を維持
         """
         # Policy Loss: KLダイバージェンス（クロスエントロピー）
         # target_policies は既に確率分布、log_policies はlog確率
-        policy_loss = -torch.sum(target_policies * log_policies, dim=1).mean()
+        policy_cross_entropy = -torch.sum(target_policies * log_policies, dim=1).mean()
+        
+        # Policyエントロピーボーナス（探索多様性を維持）
+        # エントロピー = -Σ p * log(p) を最大化（負の値を足す）
+        policies = torch.exp(log_policies)  # log確率から確率へ
+        policy_entropy = -torch.sum(policies * log_policies, dim=1).mean()
+        
+        # エントロピーボーナスを引く（エントロピー最大化 = ボーナス）
+        policy_loss = policy_cross_entropy - self.ENTROPY_BONUS_WEIGHT * policy_entropy
         
         # Value Loss: MSE
-        value_loss = nn.functional.mse_loss(values, target_values)
+        value_mse = nn.functional.mse_loss(values, target_values)
+        
+        # Value正則化: 予測の分散を促進（0に収束することを防ぐ）
+        # 予測値の分散が小さい（=すべて同じ値を予測）場合にペナルティ
+        value_variance = torch.var(values)
+        # 分散が小さいときにペナルティを大きくする（1/(var+ε)を使用）
+        value_diversity_penalty = 1.0 / (value_variance + 0.1)
+        
+        value_loss = value_mse + self.VALUE_REGULARIZATION_WEIGHT * value_diversity_penalty
         
         return policy_loss, value_loss
     
@@ -188,7 +213,12 @@ class Trainer:
 
 @dataclass
 class TrainingState:
-    """学習状態を保持するクラス（チェックポイント用）"""
+    """学習状態を保持するクラス（チェックポイント用）
+    
+    Value予測の0収束問題対策:
+    - draw_rate_historyを追加して引き分け率の推移を監視
+    - buffer_draw_ratio_historyでバッファ内の引き分け比率を追跡
+    """
     iteration: int
     total_games: int
     total_examples: int
@@ -197,6 +227,16 @@ class TrainingState:
     win_stats: Dict[str, int]
     start_time: str
     last_update_time: str
+    # Value予測の0収束問題対策: 追加の統計情報
+    draw_rate_history: List[float] = None  # イテレーションごとの引き分け率
+    buffer_draw_ratio_history: List[float] = None  # バッファ内の引き分け比率
+    
+    def __post_init__(self):
+        """リストの初期化"""
+        if self.draw_rate_history is None:
+            self.draw_rate_history = []
+        if self.buffer_draw_ratio_history is None:
+            self.buffer_draw_ratio_history = []
 
 
 class AlphaZeroTrainer:
@@ -276,6 +316,9 @@ class AlphaZeroTrainer:
             start_time=datetime.now().isoformat(),
             last_update_time=datetime.now().isoformat()
         )
+        
+        # 統計コレクター（Value予測0収束問題の診断用）
+        self.stats_collector = TrainingStatsCollector(save_dir=checkpoint_dir)
     
     def run(self, num_iterations: int = 50, resume: bool = False):
         """
@@ -315,11 +358,16 @@ class AlphaZeroTrainer:
         
         for iteration in range(start_iter, num_iterations):
             iter_start_time = time.time()
+            selfplay_start_time = time.time()
             
             print(f"\n--- Iteration {iteration + 1}/{num_iterations} ---")
             
+            # 統計コレクターでイテレーション開始
+            self.stats_collector.start_iteration(iteration + 1)
+            
             # 1. 自己対戦でデータ生成
             print("Generating self-play data...")
+            game_stats = []  # ゲーム統計
             
             if self.use_optimized:
                 # 最適化版（GPU最大効率 + FP16 + Virtual Loss）
@@ -340,7 +388,7 @@ class AlphaZeroTrainer:
                     verbose=True
                 )
             elif self.use_gpu_selfplay:
-                # 最大効率版（GPU活用 + 並行ゲーム）
+                # 最大効率版（GPU活用 + 並行ゲーム）- 統計収集対応
                 max_eff_self_play = MaxEfficiencySelfPlay(
                     network=self.network,
                     state_encoder=self.state_encoder,
@@ -351,10 +399,11 @@ class AlphaZeroTrainer:
                     num_parallel_games=self.num_parallel_games
                 )
                 
-                examples = max_eff_self_play.generate_data(
+                examples, game_stats = max_eff_self_play.generate_data(
                     num_games=self.games_per_iteration,
                     temperature_threshold=self.temperature_threshold,
-                    verbose=True
+                    verbose=True,
+                    collect_stats=True  # 統計収集を有効化
                 )
             else:
                 # CPU並列版
@@ -374,11 +423,24 @@ class AlphaZeroTrainer:
                     num_workers=self.num_workers
                 )
             
+            selfplay_duration = time.time() - selfplay_start_time
+            
             # 2. リプレイバッファに追加
             self.buffer.add(examples)
             print(f"Buffer size: {len(self.buffer)}")
             
+            # Value予測の0収束問題対策: バッファ内のValue分布を監視
+            value_dist = self.buffer.get_value_distribution()
+            print(f"Buffer value distribution: Win={value_dist['win']}, Loss={value_dist['loss']}, Draw={value_dist['draw']} ({value_dist['draw_ratio']*100:.1f}%)")
+            
+            # 引き分け率の警告
+            if value_dist['draw_ratio'] > 0.5:
+                print(f"⚠️ WARNING: Draw ratio in buffer is {value_dist['draw_ratio']*100:.1f}% (>50%)")
+            
             # 3. ネットワークを学習
+            training_start_time = time.time()
+            losses = {'policy_loss': 0.0, 'value_loss': 0.0, 'total_loss': 0.0}
+            
             if len(self.buffer) >= self.batch_size:
                 print("Training network...")
                 train_examples = self.buffer.sample(
@@ -395,20 +457,59 @@ class AlphaZeroTrainer:
                 self.training_state.policy_loss_history.append(losses['policy_loss'])
                 self.training_state.value_loss_history.append(losses['value_loss'])
                 
+                # Value予測の0収束問題対策: 引き分け率とバッファ比率を記録
+                iter_draw_rate = sum(1 for ex in examples if -0.5 <= ex.value <= 0.5) / len(examples) if examples else 0
+                self.training_state.draw_rate_history.append(iter_draw_rate)
+                self.training_state.buffer_draw_ratio_history.append(value_dist['draw_ratio'])
+                
                 print(f"Policy Loss: {losses['policy_loss']:.4f}")
                 print(f"Value Loss: {losses['value_loss']:.4f}")
+                print(f"This iteration draw rate: {iter_draw_rate*100:.1f}%")
             
-            # 4. 状態を更新
+            training_duration = time.time() - training_start_time
+            
+            # 4. 統計コレクターにゲーム統計を追加
+            if game_stats:
+                for gs in game_stats:
+                    self.stats_collector.current_iteration.game_stats.append(gs)
+                    # グローバル統計も更新
+                    self.stats_collector.global_stats["total_games"] += 1
+                    self.stats_collector.global_stats["total_moves"] += gs.total_moves
+            
+            # イテレーション統計を終了
+            self.stats_collector.end_iteration(
+                policy_loss=losses['policy_loss'],
+                value_loss=losses['value_loss'],
+                total_loss=losses['total_loss'],
+                learning_rate=self.trainer.optimizer.param_groups[0]['lr'],
+                buffer_size=len(self.buffer),
+                buffer_draw_ratio=value_dist['draw_ratio'],
+                buffer_value_distribution={
+                    'win': value_dist['win'],
+                    'loss': value_dist['loss'],
+                    'draw': value_dist['draw']
+                },
+                selfplay_duration=selfplay_duration,
+                training_duration=training_duration
+            )
+            
+            # 統計を保存
+            self.stats_collector.save("training_stats.json")
+            
+            # 5. 状態を更新
             self.training_state.iteration = iteration + 1
             self.training_state.total_games += self.games_per_iteration
             self.training_state.total_examples += len(examples)
             self.training_state.last_update_time = datetime.now().isoformat()
             
-            # 5. チェックポイント保存
+            # 6. チェックポイント保存
             self.save_checkpoint(iteration + 1)
             
             iter_time = time.time() - iter_start_time
             print(f"Iteration time: {iter_time:.1f}s")
+            
+            # 統計サマリーを表示
+            print(self.stats_collector.get_summary())
             
             # 学習率を調整（後半で下げる）
             if iteration == num_iterations // 2:

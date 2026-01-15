@@ -146,6 +146,9 @@ class MCTSNode:
             )
             
             if success:
+                # 局面履歴を更新（千日手検出用）
+                new_state.update_position_history()
+                
                 # 手番を交代
                 new_state.switch_player()
                 
@@ -169,7 +172,21 @@ class MCTSNode:
 
 
 class MCTS:
-    """モンテカルロ木探索"""
+    """モンテカルロ木探索
+    
+    Value予測の0収束問題対策:
+    - Dirichlet noiseを追加して探索多様性を維持
+    - ルートノードの事前確率にノイズを混ぜることで、
+      Policy Networkが特定の手に過度に集中することを防ぐ
+    - 局面ハッシュベースの千日手検出
+    """
+    
+    # Dirichlet noiseパラメータ（AlphaZero将棋の設定に合わせる）
+    DIRICHLET_ALPHA = 0.3    # ノイズの集中度（将棋は0.3が標準）
+    DIRICHLET_EPSILON = 0.25 # ノイズの混合比率（25%のノイズ）
+    
+    # 千日手ペナルティ（局面繰り返し検出時）
+    REPETITION_PENALTY = -0.99  # 千日手はほぼ負け扱い
     
     def __init__(
         self,
@@ -178,7 +195,9 @@ class MCTS:
         action_encoder: ActionEncoder = None,
         c_puct: float = 1.5,
         num_simulations: int = 50,
-        device: str = 'cuda'
+        device: str = 'cuda',
+        dirichlet_alpha: float = None,
+        dirichlet_epsilon: float = None
     ):
         self.network = network
         self.state_encoder = state_encoder or StateEncoder()
@@ -186,6 +205,10 @@ class MCTS:
         self.c_puct = c_puct
         self.num_simulations = num_simulations
         self.device = device
+        
+        # Dirichlet noiseパラメータ（オーバーライド可能）
+        self.dirichlet_alpha = dirichlet_alpha if dirichlet_alpha is not None else self.DIRICHLET_ALPHA
+        self.dirichlet_epsilon = dirichlet_epsilon if dirichlet_epsilon is not None else self.DIRICHLET_EPSILON
     
     def search(
         self,
@@ -226,6 +249,9 @@ class MCTS:
         # ルートノードを展開
         value = self._evaluate_and_expand(root)
         
+        # ルートノードにDirichlet noiseを追加（探索多様性の強化）
+        self._add_dirichlet_noise(root)
+        
         # シミュレーションを実行
         for _ in range(self.num_simulations):
             node = root
@@ -241,9 +267,15 @@ class MCTS:
                     node.state.opponent_hand
                 )
                 
-                if position_key in visited_in_path:
-                    # 循環検出 → 中立の評価で終端（学習を妨げない）
-                    node.backpropagate(0.0)
+                # 【重要】対局履歴からの千日手チェック（3回以上同一局面 = 千日手）
+                history_count = node.state.position_history.get(position_key, 0)
+                
+                if position_key in visited_in_path or history_count >= 3:
+                    # 千日手検出：
+                    # 1) この探索パス内でループした場合
+                    # 2) 対局全体で既に3回以上この局面が出現している場合
+                    # → 千日手ペナルティで終端（-0.99 = ほぼ負け扱い）
+                    node.backpropagate(self.REPETITION_PENALTY)
                     is_cycle = True
                     break
                 
@@ -306,6 +338,29 @@ class MCTS:
                 best_action = 0
         
         return best_action, action_probs
+    
+    def _add_dirichlet_noise(self, node: MCTSNode):
+        """
+        ルートノードにDirichlet noiseを追加
+        
+        Value予測の0収束問題対策:
+        事前確率にノイズを混ぜることで、Policy Networkが
+        特定の「安全な手」に過度に集中することを防ぎ、
+        探索の多様性を維持する。
+        
+        AlphaZero論文に基づく実装:
+        P(a) = (1-ε) * P(a) + ε * Dir(α)
+        """
+        if not node.is_expanded() or len(node.children) == 0:
+            return
+        
+        # 子ノードの数だけDirichlet分布からサンプリング
+        num_actions = len(node.children)
+        noise = np.random.dirichlet([self.dirichlet_alpha] * num_actions)
+        
+        # 各子ノードのpriorにノイズを混合
+        for i, child in enumerate(node.children.values()):
+            child.prior = (1 - self.dirichlet_epsilon) * child.prior + self.dirichlet_epsilon * noise[i]
     
     def _evaluate_and_expand(self, node: MCTSNode) -> float:
         """

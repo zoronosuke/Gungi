@@ -59,8 +59,8 @@ def parse_args():
                         help='バッチサイズ（デフォルト: 256, optimized=512）')
     parser.add_argument('--epochs', type=int, default=10,
                         help='イテレーションあたりのエポック数')
-    parser.add_argument('--lr', type=float, default=0.001,
-                        help='学習率')
+    parser.add_argument('--lr', type=float, default=0.0002,
+                        help='学習率（千日手問題対策で低めに設定）')
     
     # その他
     parser.add_argument('--checkpoint-dir', type=str, default='./checkpoints',

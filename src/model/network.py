@@ -90,6 +90,41 @@ class GungiNetwork(nn.Module):
         self.value_bn = nn.BatchNorm2d(4)
         self.value_fc1 = nn.Linear(4 * board_size * board_size, 128)
         self.value_fc2 = nn.Linear(128, 1)
+        
+        # 重みの初期化
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """
+        重みの初期化
+        
+        Policy Headの最終層は小さい値で初期化し、
+        初期状態で全アクションの確率がほぼ均等（フラット）になるようにする。
+        これにより初期のPolicy Entropyが高くなり、探索多様性を確保できる。
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                # Conv層はKaiming初期化
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                # BatchNormは標準初期化
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                # Linear層はXavier初期化
+                nn.init.xavier_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        
+        # ★ Policy Headの最終層は特別に初期化
+        # 重みを非常に小さくすることで、初期出力がほぼ均一になる
+        # これにより Policy Entropy が高い状態からスタート
+        nn.init.constant_(self.policy_fc.weight, 0.0)
+        nn.init.constant_(self.policy_fc.bias, 0.0)
+        
+        # Value Headの最終層も0に近い値で初期化
+        nn.init.xavier_normal_(self.value_fc2.weight, gain=0.1)
+        nn.init.constant_(self.value_fc2.bias, 0.0)
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
