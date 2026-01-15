@@ -48,7 +48,7 @@ class GPUSelfPlay:
         state_encoder: StateEncoder = None,
         action_encoder: ActionEncoder = None,
         mcts_simulations: int = 50,
-        c_puct: float = 1.5,
+        c_puct: float = 3.0,  # 探索幅を拡大（1.5→3.0、千日手対策）
         device: str = 'cuda',
         batch_size: int = 64
     ):
@@ -187,7 +187,7 @@ class GPUSelfPlay:
     
     def play_game(
         self,
-        temperature_threshold: int = 20,
+        temperature_threshold: int = 30,  # 温度維持手数を延長（20→30）
         verbose: bool = False
     ) -> Tuple[List[TrainingExample], Optional[Player]]:
         """1ゲームをプレイ"""
@@ -213,7 +213,7 @@ class GPUSelfPlay:
             opponent_hand = hands[current_player.opponent]
             
             state = self.state_encoder.encode(board, current_player, my_hand, opponent_hand)
-            temperature = 1.0 if move_count < temperature_threshold else 0.1
+            temperature = 2.0 if move_count < temperature_threshold else 0.1  # 温度を強化（1.0→2.0）
             
             action_idx, action_probs = self._mcts_search(
                 board, current_player, my_hand, opponent_hand, temperature
@@ -237,7 +237,7 @@ class GPUSelfPlay:
         examples = []
         for state, policy, player in game_history:
             if winner is None:
-                value = 0.0
+                value = -1.0  # 千日手/最大手数到達は敗北扱い（千日手対策）
             elif winner == player:
                 value = 1.0
             else:
@@ -250,7 +250,7 @@ class GPUSelfPlay:
     def generate_data(
         self,
         num_games: int,
-        temperature_threshold: int = 20,
+        temperature_threshold: int = 30,  # 温度維持手数を延長（20→30）
         verbose: bool = True,
         num_workers: int = 1
     ) -> List[TrainingExample]:

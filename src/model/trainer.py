@@ -156,9 +156,9 @@ class Trainer:
             'total_loss': avg_policy_loss + avg_value_loss
         }
     
-    # Value予測の0収束問題対策パラメータ
+    # Value予測の0収束問題対策パラメータ（千日手対策で強化）
     VALUE_REGULARIZATION_WEIGHT = 0.01  # Value正則化の重み
-    ENTROPY_BONUS_WEIGHT = 0.01         # Policyエントロピーボーナスの重み
+    ENTROPY_BONUS_WEIGHT = 0.05         # Policyエントロピーボーナスの重み（0.01→0.05に強化）
     
     def _compute_loss(
         self,
@@ -250,10 +250,10 @@ class AlphaZeroTrainer:
         device: str = 'cuda',
         # MCTS設定
         mcts_simulations: int = 50,
-        c_puct: float = 1.5,
+        c_puct: float = 3.0,  # 探索幅を拡大（1.5→3.0、千日手対策）
         # 自己対戦設定
         games_per_iteration: int = 10,
-        temperature_threshold: int = 20,
+        temperature_threshold: int = 30,  # 温度維持手数を延長（20→30）
         num_workers: int = 1,  # CPU並列版用
         use_gpu_selfplay: bool = True,  # GPU版自己対戦を使うか
         use_optimized: bool = False,  # 最適化版を使うか

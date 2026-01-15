@@ -181,23 +181,24 @@ class MCTS:
     - 局面ハッシュベースの千日手検出
     """
     
-    # Dirichlet noiseパラメータ（AlphaZero将棋の設定に合わせる）
+    # Dirichlet noiseパラメータ（探索多様性を大幅強化）
     DIRICHLET_ALPHA = 0.3    # ノイズの集中度（将棋は0.3が標準）
-    DIRICHLET_EPSILON = 0.25 # ノイズの混合比率（25%のノイズ）
+    DIRICHLET_EPSILON = 0.5  # ノイズの混合比率（50%に強化 - 千日手対策）
     
     # 千日手ペナルティ（局面繰り返し検出時）
-    REPETITION_PENALTY = -0.99  # 千日手はほぼ負け扱い
+    REPETITION_PENALTY = -1.0   # 千日手は完全敗北扱い（-0.99から強化）
     
     def __init__(
         self,
         network,
         state_encoder: StateEncoder = None,
         action_encoder: ActionEncoder = None,
-        c_puct: float = 1.5,
+        c_puct: float = 3.0,  # 探索幅を拡大（1.5→3.0、千日手対策）
         num_simulations: int = 50,
         device: str = 'cuda',
         dirichlet_alpha: float = None,
-        dirichlet_epsilon: float = None
+        dirichlet_epsilon: float = None,
+        default_temperature: float = 2.0  # 確率分布平滑化（1.0→2.0）
     ):
         self.network = network
         self.state_encoder = state_encoder or StateEncoder()
@@ -205,6 +206,7 @@ class MCTS:
         self.c_puct = c_puct
         self.num_simulations = num_simulations
         self.device = device
+        self.default_temperature = default_temperature  # デフォルト温度（千日手対策で高めに設定）
         
         # Dirichlet noiseパラメータ（オーバーライド可能）
         self.dirichlet_alpha = dirichlet_alpha if dirichlet_alpha is not None else self.DIRICHLET_ALPHA
@@ -216,7 +218,7 @@ class MCTS:
         player: Player,
         my_hand: Dict[PieceType, int],
         opponent_hand: Dict[PieceType, int],
-        temperature: float = 1.0,
+        temperature: float = 2.0,  # 確率分布平滑化（千日手対策で高めに設定）
         position_history: Dict[str, int] = None
     ) -> Tuple[int, np.ndarray]:
         """

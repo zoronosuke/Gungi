@@ -104,7 +104,7 @@ def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str]]:
         opponent_hand = hands[current_player.opponent]
         
         state = state_encoder.encode(board, current_player, my_hand, opponent_hand, position_history=position_history)
-        temperature = 1.0 if move_count < _global_temperature_threshold else 0.1
+        temperature = 2.0 if move_count < _global_temperature_threshold else 0.1  # 温度を2.0に強化（千日手対策）
         
         action_idx, action_probs = mcts.search(
             board, current_player, my_hand, opponent_hand,
@@ -166,10 +166,10 @@ class SelfPlay:
     # 最大手数
     MAX_MOVES = 300  # 軍儀は複雑なので300手まで許容
     
-    # 引き分けの評価値（強いペナルティで引き分け回避を促進）
-    # Value=0収束問題対策: 引き分けに強いペナルティを与えることで
-    # AIが勝敗を目指すよう学習を誘導
-    DRAW_VALUE_REPETITION = -0.95  # 千日手は強いペナルティ
+    # 引き分けの評価値（千日手は敗北として扱う）
+    # Value=0収束問題対策: 千日手を完全敗北として扱うことで
+    # AIが千日手ループを回避するよう強制
+    DRAW_VALUE_REPETITION = -1.0   # 千日手は完全敗北扱い（-0.95→-1.0）
     DRAW_VALUE_MAX_MOVES = -0.5    # 最大手数到達も中程度のペナルティ
     
     def __init__(
@@ -252,7 +252,7 @@ class SelfPlay:
             )
             
             # 温度を決定
-            temperature = 1.0 if move_count < temperature_threshold else 0.1
+            temperature = 2.0 if move_count < temperature_threshold else 0.1  # 温度を2.0に強化（千日手対策）
             
             # MCTSで探索（局面履歴を渡す）
             action_idx, action_probs = self.mcts.search(

@@ -76,12 +76,12 @@ class MaxEfficiencySelfPlay:
     DIRICHLET_ALPHA = 0.3   # 将棋は0.3が標準
     DIRICHLET_EPSILON = 0.5  # ノイズの混合率50%（千日手対策で強化）
     
-    # 引き分けの評価値（強いペナルティで引き分け回避を促進）
-    DRAW_VALUE_REPETITION = -0.99  # 千日手は最大ペナルティ（負けとほぼ同等）
+    # 引き分けの評価値（千日手は完全敗北扱い）
+    DRAW_VALUE_REPETITION = -1.0   # 千日手は完全敗北扱い（-0.99→-1.0）
     DRAW_VALUE_MAX_MOVES = -0.7    # 最大手数もペナルティ強化
     
     # 循環手へのペナルティ（MCTSのQ値に加算）
-    REPETITION_PENALTY = -0.5  # 循環しそうな手にペナルティ
+    REPETITION_PENALTY = -1.0  # 循環しそうな手に強いペナルティ（-0.5→-1.0）
     
     def __init__(
         self,
@@ -89,7 +89,7 @@ class MaxEfficiencySelfPlay:
         state_encoder: StateEncoder = None,
         action_encoder: ActionEncoder = None,
         mcts_simulations: int = 100,  # 将棋AIは800、最低でも100推奨
-        c_puct: float = 1.5,
+        c_puct: float = 3.0,  # 探索幅を拡大（1.5→3.0、千日手対策）
         device: str = 'cuda',
         num_parallel_games: int = 16,  # 並行ゲーム数
         use_dirichlet_noise: bool = True  # 探索の多様性

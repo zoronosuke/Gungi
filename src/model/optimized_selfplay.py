@@ -65,14 +65,14 @@ class OptimizedSelfPlay:
     MAX_MOVES = 300  # 軍儀は複雑なので300手まで許容
     REPETITION_THRESHOLD = 3  # 千日手判定を3回に（早期検出）
     
-    # 引き分けの評価値（強いペナルティで引き分け回避を促進）
-    # Value予測の0収束問題対策: 引き分けに強いペナルティ
-    DRAW_VALUE_REPETITION = -0.95  # 千日手は強いペナルティ
+    # 引き分けの評価値（千日手は完全敗北扱い）
+    # Value予測の0収束問題対策: 千日手を敗北として扱う
+    DRAW_VALUE_REPETITION = -1.0   # 千日手は完全敗北扱い（-0.95→-1.0）
     DRAW_VALUE_MAX_MOVES = -0.5    # 最大手数も中程度のペナルティ
     
-    # Dirichletノイズ（AlphaZeroスタイル）
+    # Dirichletノイズ（探索多様性強化）
     DIRICHLET_ALPHA = 0.15  # より小さく（将棋と同じ）
-    DIRICHLET_EPSILON = 0.25
+    DIRICHLET_EPSILON = 0.5  # ノイズ混合率を50%に強化（千日手対策）
     
     def __init__(
         self,
@@ -80,7 +80,7 @@ class OptimizedSelfPlay:
         state_encoder: StateEncoder = None,
         action_encoder: ActionEncoder = None,
         mcts_simulations: int = 100,  # より多くのシミュレーション
-        c_puct: float = 1.5,
+        c_puct: float = 3.0,  # 探索幅を拡大（1.5→3.0、千日手対策）
         device: str = 'cuda',
         num_parallel_games: int = 64,  # より多くの並行ゲーム
         virtual_loss: float = 3.0,  # Virtual Loss
@@ -319,7 +319,7 @@ class OptimizedSelfPlay:
         ctx.mcts_total_values = defaultdict(float)
         ctx.mcts_simulation = 0
         ctx.legal_actions = self._get_legal_actions(ctx)
-        ctx.temperature = 1.0 if ctx.move_count < temperature_threshold else 0.1
+        ctx.temperature = 2.0 if ctx.move_count < temperature_threshold else 0.1  # 温度を2.0に強化
         ctx.cached_policy = None
         
         # 現在の状態をエンコード
