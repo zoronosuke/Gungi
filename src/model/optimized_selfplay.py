@@ -22,6 +22,7 @@ from ..engine.rules import Rules
 from ..engine.initial_setup import load_initial_board, get_initial_hand_pieces
 from .encoder import StateEncoder, ActionEncoder
 from .self_play import TrainingExample
+from .training_stats import MoveStats
 
 
 @dataclass
@@ -48,6 +49,10 @@ class GameContext:
     current_state: Optional[np.ndarray] = None
     temperature: float = 1.0
     cached_policy: Optional[np.ndarray] = None
+    
+    # 統計収集用
+    move_stats: List = field(default_factory=list)  # List[MoveStats]
+    last_value_prediction: float = 0.0  # 直近のValue予測
 
 
 class OptimizedSelfPlay:
@@ -231,11 +236,30 @@ class OptimizedSelfPlay:
         
         return selected_actions
     
-    def _finalize_action(self, ctx: GameContext) -> Tuple[int, np.ndarray]:
-        """MCTSの結果から最終的な行動を選択"""
+    def _compute_policy_entropy(self, probs: np.ndarray) -> float:
+        """ポリシーのエントロピーを計算（探索の多様性指標）"""
+        # 0より大きい確率のみ使用
+        valid_probs = probs[probs > 1e-10]
+        if len(valid_probs) == 0:
+            return 0.0
+        return -np.sum(valid_probs * np.log(valid_probs + 1e-10))
+    
+    def _finalize_action(self, ctx: GameContext) -> Tuple[int, np.ndarray, float]:
+        """MCTSの結果から最終的な行動を選択
+        
+        Returns:
+            (action, action_probs, policy_entropy)
+        """
         action_probs = np.zeros(7695)
         for action_idx in ctx.legal_actions:
             action_probs[action_idx] = ctx.mcts_visit_counts.get(action_idx, 0)
+        
+        # Policy Entropyを計算（正規化前の訪問回数から）
+        visit_probs = action_probs.copy()
+        total_visits = visit_probs.sum()
+        if total_visits > 0:
+            visit_probs = visit_probs / total_visits
+        policy_entropy = self._compute_policy_entropy(visit_probs)
         
         if ctx.temperature == 0 or ctx.temperature < 0.1:
             best_action = max(ctx.legal_actions, key=lambda a: ctx.mcts_visit_counts.get(a, 0))
@@ -252,10 +276,32 @@ class OptimizedSelfPlay:
                     final_probs[a] = 1.0 / len(ctx.legal_actions)
             best_action = np.random.choice(7695, p=final_probs)
         
-        return best_action, final_probs
+        return best_action, final_probs, policy_entropy
     
-    def _apply_action(self, ctx: GameContext, action_idx: int, action_probs: np.ndarray):
+    def _apply_action(self, ctx: GameContext, action_idx: int, action_probs: np.ndarray, policy_entropy: float = 0.0):
         """アクションを適用"""
+        # MoveStatsを記録
+        valid_probs = action_probs[action_probs > 1e-10]
+        top_move_prob = np.max(action_probs) if len(action_probs) > 0 else 0.0
+        top3_probs = np.sort(action_probs)[-3:]
+        top3_move_prob = np.sum(top3_probs)
+        
+        # 千日手リスクをチェック（同一局面が2回以上出現）
+        position_key = self._get_position_hash(ctx)
+        is_repetition_risk = ctx.position_history.get(position_key, 0) >= 2
+        
+        move_stat = MoveStats(
+            move_number=ctx.move_count + 1,
+            policy_entropy=policy_entropy,
+            value_prediction=ctx.last_value_prediction,
+            mcts_visits=sum(ctx.mcts_visit_counts.values()),
+            top_move_prob=top_move_prob,
+            top3_move_prob=top3_move_prob,
+            temperature=ctx.temperature,
+            is_repetition_risk=is_repetition_risk
+        )
+        ctx.move_stats.append(move_stat)
+        
         # 履歴に記録
         ctx.history.append((ctx.current_state.copy(), action_probs.copy(), ctx.current_player))
         
@@ -440,6 +486,8 @@ class OptimizedSelfPlay:
                     ctx.mcts_visit_counts[action] += 1
                     ctx.mcts_total_values[action] += value
                     ctx.mcts_simulation += 1
+                    # 最新のValue予測を記録（統計用）
+                    ctx.last_value_prediction = float(sim_values[j])
             
             # フェーズ4: MCTS完了したゲームの処理
             games_to_remove = []
@@ -457,8 +505,8 @@ class OptimizedSelfPlay:
                 
                 if ctx.mcts_simulation >= self.mcts_simulations:
                     # MCTS完了、手を選択して適用
-                    action, action_probs = self._finalize_action(ctx)
-                    self._apply_action(ctx, action, action_probs)
+                    action, action_probs, policy_entropy = self._finalize_action(ctx)
+                    self._apply_action(ctx, action, action_probs, policy_entropy)
                     
                     if ctx.finished:
                         games_to_remove.append(ctx)
@@ -487,8 +535,10 @@ class OptimizedSelfPlay:
                         winner=winner_str,
                         termination_reason=term_reason,
                         total_moves=ctx.move_count,
-                        game_duration_seconds=0.0  # 時間計測は省略
+                        game_duration_seconds=0.0,  # 時間計測は省略
+                        move_stats=ctx.move_stats.copy()  # MoveStatsを渡す
                     )
+                    gs.compute_aggregates()  # 集計統計を計算
                     game_stats_list.append(gs)
                 
                 # 学習データを作成（千日手と最大手数到達で異なるペナルティ）
