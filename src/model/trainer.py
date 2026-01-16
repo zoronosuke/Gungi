@@ -382,10 +382,11 @@ class AlphaZeroTrainer:
                     use_fp16=self.use_fp16
                 )
                 
-                examples = optimized_self_play.generate_data(
+                examples, game_stats = optimized_self_play.generate_data(
                     num_games=self.games_per_iteration,
                     temperature_threshold=self.temperature_threshold,
-                    verbose=True
+                    verbose=True,
+                    collect_stats=True  # 統計収集を有効化
                 )
             elif self.use_gpu_selfplay:
                 # 最大効率版（GPU活用 + 並行ゲーム）- 統計収集対応

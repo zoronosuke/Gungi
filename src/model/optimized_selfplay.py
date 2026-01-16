@@ -334,13 +334,20 @@ class OptimizedSelfPlay:
         num_games: int,
         temperature_threshold: int = 30,
         verbose: bool = True,
-        num_workers: int = 1  # 互換性のため（使用しない）
-    ) -> List[TrainingExample]:
+        num_workers: int = 1,  # 互換性のため（使用しない）
+        collect_stats: bool = True  # 統計収集フラグ
+    ) -> Tuple[List[TrainingExample], List]:
         """
         複数ゲームを並行してデータを生成
         最適化: バッチサイズを大きくし、Virtual Lossで並列MCTS
+        
+        Returns:
+            (examples, game_stats): 学習データとゲーム統計
         """
+        from .training_stats import GameStats
+        
         all_examples = []
+        game_stats_list = []  # ゲーム統計リスト
         wins = {'BLACK': 0, 'WHITE': 0, None: 0}
         draw_reasons = {'REPETITION': 0, 'MAX_MOVES': 0, 'OTHER': 0}
         completed_games = 0
@@ -464,6 +471,26 @@ class OptimizedSelfPlay:
                 active_games.remove(ctx)
                 completed_games += 1
                 
+                # ゲーム統計を作成
+                if collect_stats:
+                    winner_str = ctx.winner.name if ctx.winner else "DRAW"
+                    term_reason = ctx.draw_reason if ctx.winner is None else ("CHECKMATE" if ctx.winner else "UNKNOWN")
+                    if ctx.winner is not None:
+                        term_reason = f"{ctx.winner.name}_WIN"
+                    elif ctx.draw_reason:
+                        term_reason = ctx.draw_reason
+                    else:
+                        term_reason = "UNKNOWN"
+                    
+                    gs = GameStats(
+                        game_id=ctx.game_id,
+                        winner=winner_str,
+                        termination_reason=term_reason,
+                        total_moves=ctx.move_count,
+                        game_duration_seconds=0.0  # 時間計測は省略
+                    )
+                    game_stats_list.append(gs)
+                
                 # 学習データを作成（千日手と最大手数到達で異なるペナルティ）
                 for state, policy, player in ctx.history:
                     if ctx.winner is None:
@@ -515,7 +542,7 @@ class OptimizedSelfPlay:
             avg_moves = len(all_examples) / num_games if num_games > 0 else 0
             print(f"Average moves per game: {avg_moves:.1f}")
         
-        return all_examples
+        return all_examples, game_stats_list
 
 
 # 推奨設定
