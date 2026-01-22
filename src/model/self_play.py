@@ -52,12 +52,12 @@ def _init_worker(network_state_dict, device, mcts_simulations, c_puct, temperatu
     _global_network.eval()
 
 
-def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str]]:
+def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str], Optional[str]]:
     """
     単一ゲームをプレイ（ワーカープロセス用）
     
     Returns:
-        (examples_as_dicts, winner_name)
+        (examples_as_dicts, winner_name, draw_reason)
     """
     global _global_network, _global_device, _global_mcts_simulations, _global_c_puct, _global_temperature_threshold
     
@@ -126,17 +126,37 @@ def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str]]:
             current_player, hands[current_player], hands[current_player.opponent]
         )
         position_history[position_key] = position_history.get(position_key, 0) + 1
+        history_count = position_history[position_key]
+        
+        # 千日手判定: 同一局面が4回出現したら即座に終了
+        if history_count >= 4:
+            winner = None
+            break
         
         move_count += 1
     
-    if move_count >= MAX_MOVES:
-        winner = None
+    # 引き分け理由の判定
+    draw_reason = None
+    if winner is None:
+        # 最後の局面の出現回数を確認
+        if position_history.get(position_key, 0) >= 4:
+            draw_reason = 'REPETITION'
+        elif move_count >= MAX_MOVES:
+            draw_reason = 'MAX_MOVES'
     
     # 学習データを作成
+    # 千日手ペナルティ値（SelfPlayクラスの定数と同じ値を使用）
+    DRAW_VALUE_REPETITION = -1.0
+    DRAW_VALUE_MAX_MOVES = -0.5
+    
     examples = []
     for state, policy, player in game_history:
         if winner is None:
-            value = 0.0
+            # 引き分け理由に応じたペナルティ
+            if draw_reason == 'REPETITION':
+                value = DRAW_VALUE_REPETITION  # 千日手は強いペナルティ
+            else:
+                value = DRAW_VALUE_MAX_MOVES   # 最大手数は中程度のペナルティ
         elif winner == player:
             value = 1.0
         else:
@@ -149,7 +169,7 @@ def _play_single_game(game_idx: int) -> Tuple[List[dict], Optional[str]]:
         })
     
     winner_name = winner.name if winner else None
-    return examples, winner_name
+    return examples, winner_name, draw_reason if winner is None else None
 
 
 @dataclass
@@ -234,6 +254,7 @@ class SelfPlay:
         
         move_count = 0
         winner = None
+        draw_reason = None  # 引き分け理由（千日手対策用）
         
         while move_count < self.MAX_MOVES:
             # ゲーム終了チェック
@@ -285,19 +306,19 @@ class SelfPlay:
                 current_player, hands[current_player], hands[current_player.opponent]
             )
             position_history[position_key] = position_history.get(position_key, 0) + 1
+            history_count = position_history[position_key]
+            
+            # 千日手判定: 同一局面が4回出現したら即座に終了
+            if history_count >= 4:
+                winner = None
+                draw_reason = 'REPETITION'
+                break
             
             move_count += 1
         
-        # 引き分け理由を記録
-        draw_reason = None
-        
         # 最大手数に達した場合は引き分け
-        if move_count >= self.MAX_MOVES:
-            winner = None
+        if move_count >= self.MAX_MOVES and winner is None:
             draw_reason = 'MAX_MOVES'
-        elif winner is None and move_count > 0:
-            # 千日手の可能性（ゲームが途中で終了し、勝者がいない場合）
-            draw_reason = 'REPETITION'
         
         if verbose:
             if winner:
@@ -441,7 +462,7 @@ class SelfPlay:
             
             for future in as_completed(futures):
                 try:
-                    examples_dicts, winner_name = future.result()
+                    examples_dicts, winner_name, draw_reason = future.result()
                     
                     # dictからTrainingExampleに変換
                     for ex_dict in examples_dicts:

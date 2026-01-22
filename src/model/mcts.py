@@ -368,10 +368,23 @@ class MCTS:
         """
         ノードをニューラルネットワークで評価し、展開する
         
+        千日手検出:
+        葉ノードが千日手局面（3回以上同一局面）の場合、
+        ネットワーク評価を行わず即座にペナルティを返す。
+        
         Returns:
             value: 評価値（現在のプレイヤー視点）
         """
         state = node.state
+        
+        # 千日手チェック: 同一局面が3回以上出現していれば即座にペナルティ
+        position_key = state.board.get_position_key(
+            state.player, state.my_hand, state.opponent_hand
+        )
+        history_count = state.position_history.get(position_key, 0)
+        if history_count >= 3:
+            # 千日手局面 → ネットワーク評価せず敗北扱い
+            return self.REPETITION_PENALTY
         
         # 合法手を取得
         legal_moves = Rules.get_legal_moves(
